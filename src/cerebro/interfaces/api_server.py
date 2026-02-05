@@ -30,6 +30,7 @@ Endpoints:
 
     GET  /memory/health          Health report
     GET  /graph/stats            Graph stats
+    GET  /graph/data             Graph data for visualization
     GET  /graph/neighbors/{id}   Neighbors
 """
 
@@ -176,7 +177,8 @@ async def root():
             "POST /episodes/start", "POST /episodes/{id}/step", "POST /episodes/{id}/end",
             "POST /sessions/save", "GET /sessions",
             "GET /agents", "POST /agents",
-            "GET /memory/health", "GET /graph/stats", "GET /graph/neighbors/{id}",
+            "GET /memory/health", "GET /graph/stats", "GET /graph/data",
+            "GET /graph/neighbors/{id}",
         ],
     }
 
@@ -601,6 +603,63 @@ async def graph_stats():
         "memory_types": s.get("memory_types", {}),
         "layers": s.get("layers", {}),
     }
+
+
+@app.get("/graph/data")
+async def graph_data(
+    limit: int = Query(200, ge=1, le=2000),
+    min_salience: float = Query(0.0, ge=0.0, le=1.0),
+):
+    """Get graph data (nodes + links) for visualization."""
+    ctx = get_cortex()
+
+    # Get nodes from SQLite, ordered by salience descending
+    rows = ctx.graph.conn.execute(
+        "SELECT id, content, memory_type, layer, salience, valence, "
+        "arousal, tags_json, concepts_json, agent_id, access_count, "
+        "created_at FROM memory_nodes "
+        "WHERE salience >= ? "
+        "ORDER BY salience DESC LIMIT ?",
+        (min_salience, limit),
+    ).fetchall()
+
+    node_ids = set()
+    nodes = []
+    for r in rows:
+        node_ids.add(r["id"])
+        nodes.append({
+            "id": r["id"],
+            "content": r["content"][:300],
+            "type": r["memory_type"],
+            "layer": r["layer"],
+            "salience": round(r["salience"], 3),
+            "valence": r["valence"],
+            "arousal": round(r["arousal"], 3),
+            "tags": json.loads(r["tags_json"]) if r["tags_json"] else [],
+            "concepts": json.loads(r["concepts_json"]) if r["concepts_json"] else [],
+            "agent_id": r["agent_id"],
+            "access_count": r["access_count"],
+            "created_at": r["created_at"],
+        })
+
+    # Get links between the visible nodes
+    links = []
+    if node_ids:
+        placeholders = ",".join("?" * len(node_ids))
+        link_rows = ctx.graph.conn.execute(
+            f"SELECT source_id, target_id, link_type, weight FROM associative_links "
+            f"WHERE source_id IN ({placeholders}) AND target_id IN ({placeholders})",
+            list(node_ids) + list(node_ids),
+        ).fetchall()
+        for lr in link_rows:
+            links.append({
+                "source": lr["source_id"],
+                "target": lr["target_id"],
+                "type": lr["link_type"],
+                "weight": round(lr["weight"], 3),
+            })
+
+    return {"nodes": nodes, "links": links}
 
 
 @app.get("/graph/neighbors/{memory_id}")
