@@ -1,0 +1,43 @@
+# Data (persisted locally, not in git)
+data/chroma/
+data/cerebro.db
+data/exports/
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Neo-Cortex source (reference only)
+neocortex-source/
+
+# Raw data / research papers
+raw_data/
+
+# Screenshots
+*.png

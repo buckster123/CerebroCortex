@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "cerebro-cortex"
+version = "0.1.0"
+description = "Brain-analogous AI memory system with associative networks, ACT-R/FSRS activation, and dream consolidation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "CerebroCore Team"},
+]
+
+dependencies = [
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "python-igraph>=0.11.0",
+    "pydantic>=2.0.0",
+    "click>=8.0.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=0.1.0"]
+api = ["fastapi>=0.100.0", "uvicorn>=0.22.0"]
+llm = ["anthropic>=0.25.0", "openai>=1.0.0"]
+all = ["cerebro-cortex[mcp,api,llm]"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+cerebro = "cerebro.interfaces.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
