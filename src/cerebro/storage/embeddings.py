@@ -4,11 +4,15 @@ Ported from Neo-Cortex with minimal changes. Priority order:
 1. sentence-transformers (primary, CPU-based, works everywhere)
 2. Ollama (alternative, if running locally)
 3. Fallback hash (last resort, no semantic meaning)
+
+All implementations return numpy arrays for ChromaDB 1.4+ compatibility.
 """
 
 import hashlib
 import logging
 from typing import Protocol
+
+import numpy as np
 
 from cerebro.config import (
     EMBEDDING_DIM,
@@ -24,9 +28,9 @@ class EmbeddingFunction(Protocol):
     """Protocol for embedding functions."""
 
     def name(self) -> str: ...
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
-    def embed_query(self, text: str) -> list[float]: ...
-    def __call__(self, input: list[str]) -> list[list[float]]: ...
+    def embed(self, texts: list[str]) -> list[np.ndarray]: ...
+    def embed_query(self, text: str) -> np.ndarray: ...
+    def __call__(self, input: list[str]) -> list[np.ndarray]: ...
 
 
 class SentenceTransformerEmbeddings:
@@ -51,21 +55,21 @@ class SentenceTransformerEmbeddings:
     def dimension(self) -> int:
         return EMBEDDING_DIM
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
+    def __call__(self, input: list[str]) -> list[np.ndarray]:
         return self.embed(input)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> list[np.ndarray]:
         model = self._load_model()
         embeddings = model.encode(texts, convert_to_numpy=True)
-        return embeddings.tolist()
+        return [row.astype(np.float32) for row in embeddings]
 
-    def embed_query(self, text: str = None, *, input: str = None) -> list[float]:
+    def embed_query(self, text: str = None, *, input: str = None) -> np.ndarray:
         query = text if text is not None else input
         if query is None:
             raise ValueError("Must provide text or input")
         model = self._load_model()
         embedding = model.encode(query, convert_to_numpy=True)
-        return embedding.tolist()
+        return embedding.astype(np.float32)
 
 
 class OllamaEmbeddings:
@@ -84,10 +88,10 @@ class OllamaEmbeddings:
     def dimension(self) -> int:
         return self._dimension or 768
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
+    def __call__(self, input: list[str]) -> list[np.ndarray]:
         return self.embed(input)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> list[np.ndarray]:
         import httpx
         embeddings = []
         for text in texts:
@@ -96,12 +100,12 @@ class OllamaEmbeddings:
             except Exception as e:
                 logger.error(f"Ollama embed failed: {e}")
                 if self._dimension:
-                    embeddings.append([0.0] * self._dimension)
+                    embeddings.append(np.zeros(self._dimension, dtype=np.float32))
                 else:
                     raise
         return embeddings
 
-    def _embed_single(self, text: str) -> list[float]:
+    def _embed_single(self, text: str) -> np.ndarray:
         import httpx
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
@@ -112,9 +116,9 @@ class OllamaEmbeddings:
             embedding = response.json()["embedding"]
             if self._dimension is None:
                 self._dimension = len(embedding)
-            return embedding
+            return np.array(embedding, dtype=np.float32)
 
-    def embed_query(self, text: str = None, *, input: str = None) -> list[float]:
+    def embed_query(self, text: str = None, *, input: str = None) -> np.ndarray:
         query = text if text is not None else input
         if query is None:
             raise ValueError("Must provide text or input")
@@ -122,7 +126,11 @@ class OllamaEmbeddings:
 
 
 class FallbackEmbeddings:
-    """Hash-based pseudo-embeddings when nothing else is available."""
+    """Hash-based pseudo-embeddings when nothing else is available.
+
+    Returns deterministic numpy arrays for ChromaDB 1.4+ compatibility.
+    No semantic meaning — only use as last resort.
+    """
 
     def __init__(self, dimension: int = EMBEDDING_DIM):
         self._dimension = dimension
@@ -136,22 +144,21 @@ class FallbackEmbeddings:
     def dimension(self) -> int:
         return self._dimension
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
+    def __call__(self, input: list[str]) -> list[np.ndarray]:
         return self.embed(input)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> list[np.ndarray]:
         return [self._hash_embed(text) for text in texts]
 
-    def _hash_embed(self, text: str) -> list[float]:
-        embeddings = []
+    def _hash_embed(self, text: str) -> np.ndarray:
+        values = np.empty(self._dimension, dtype=np.float32)
         for i in range(self._dimension):
             hash_input = f"{text}:{i}".encode()
             hash_val = int(hashlib.md5(hash_input).hexdigest(), 16)
-            normalized = ((hash_val % 10000) / 5000) - 1
-            embeddings.append(normalized)
-        return embeddings
+            values[i] = ((hash_val % 10000) / 5000) - 1
+        return values
 
-    def embed_query(self, text: str = None, *, input: str = None) -> list[float]:
+    def embed_query(self, text: str = None, *, input: str = None) -> np.ndarray:
         query = text if text is not None else input
         if query is None:
             raise ValueError("Must provide text or input")

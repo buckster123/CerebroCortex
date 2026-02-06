@@ -32,7 +32,7 @@ from cerebro.interfaces.mcp_server import (
 def cortex():
     """CerebroCortex with temporary database for MCP tests."""
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_mcp.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_mcp.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         yield ctx
         ctx.close()

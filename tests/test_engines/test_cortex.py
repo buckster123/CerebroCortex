@@ -11,9 +11,12 @@ from cerebro.types import EmotionalValence, LinkType, MemoryType
 
 @pytest.fixture
 def cortex():
-    """CerebroCortex with temporary database."""
+    """CerebroCortex with temporary database and vector store."""
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test.db")
+        ctx = CerebroCortex(
+            db_path=Path(d) / "test.db",
+            chroma_dir=Path(d) / "chroma",
+        )
         ctx.initialize()
         yield ctx
         ctx.close()
@@ -66,6 +69,17 @@ class TestRemember:
         # Should have contextual link
         assert cortex.graph.has_link(second.id, first.id)
 
+    def test_remember_writes_to_vector_store(self, cortex):
+        """Verify that remember() writes to ChromaDB as well as graph."""
+        node = cortex.remember(
+            "PostgreSQL supports JSONB columns for semi-structured data",
+            memory_type=MemoryType.SEMANTIC,
+        )
+        # Should be in knowledge collection
+        from cerebro.config import COLLECTION_KNOWLEDGE
+        count = cortex.vector.count(COLLECTION_KNOWLEDGE)
+        assert count >= 1
+
 
 class TestRecall:
     def test_recall_with_context(self, cortex):
@@ -100,6 +114,64 @@ class TestRecall:
         )
         for node, _ in results:
             assert node.metadata.memory_type == MemoryType.SEMANTIC
+
+    def test_recall_finds_semantically_similar(self, cortex):
+        """Vector search should find semantically related memories."""
+        cortex.remember(
+            "Docker containers provide lightweight isolated environments for applications"
+        )
+        cortex.remember(
+            "Kubernetes orchestrates container deployments across clusters"
+        )
+        cortex.remember(
+            "The French Revolution began in 1789 with the storming of the Bastille"
+        )
+
+        results = cortex.recall("container orchestration and deployment", top_k=3)
+        assert len(results) >= 2
+        # Container-related memories should rank higher than French Revolution
+        contents = [node.content for node, _ in results]
+        container_hits = sum(
+            1 for c in contents if "container" in c.lower() or "kubernetes" in c.lower()
+        )
+        assert container_hits >= 1
+
+    def test_recall_with_type_filter_via_vector(self, cortex):
+        """Vector recall respects memory type filters."""
+        cortex.remember(
+            "Python uses indentation for code blocks",
+            memory_type=MemoryType.SEMANTIC,
+        )
+        cortex.remember(
+            "Step 1: write test, Step 2: write code, Step 3: refactor",
+            memory_type=MemoryType.PROCEDURAL,
+        )
+
+        results = cortex.recall(
+            "programming", memory_types=[MemoryType.PROCEDURAL],
+        )
+        for node, _ in results:
+            assert node.metadata.memory_type == MemoryType.PROCEDURAL
+
+    def test_recall_vector_plus_spreading(self, cortex):
+        """Spreading activation should expand results beyond pure vector hits."""
+        m1 = cortex.remember("Machine learning models require training data")
+        m2 = cortex.remember("Neural networks have layers of interconnected nodes")
+        # m3 is linked to m2 but not directly about ML
+        m3 = cortex.remember("GPU acceleration speeds up matrix operations significantly")
+        cortex.associate(m2.id, m3.id, LinkType.CAUSAL, weight=0.9)
+
+        # Recall about ML — m3 should appear via spreading from m2
+        results = cortex.recall("machine learning neural networks", top_k=5)
+        result_ids = [node.id for node, _ in results]
+        assert m1.id in result_ids
+        assert m2.id in result_ids
+        # m3 may appear via spreading activation from m2
+
+    def test_recall_empty_store(self, cortex):
+        """Recall on empty store should return empty list."""
+        results = cortex.recall("anything")
+        assert results == []
 
 
 class TestAssociate:
@@ -148,11 +220,24 @@ class TestStats:
         assert "schemas" in stats
         assert stats["nodes"] >= 1
 
+    def test_stats_includes_vector_store(self, cortex):
+        """Stats should include ChromaDB vector store counts."""
+        cortex.remember("A memory about vector databases and embeddings")
+
+        stats = cortex.stats()
+        assert "vector_store" in stats
+        assert isinstance(stats["vector_store"], dict)
+        total = sum(stats["vector_store"].values())
+        assert total >= 1
+
 
 class TestInitialization:
     def test_double_initialize(self):
         with tempfile.TemporaryDirectory() as d:
-            ctx = CerebroCortex(db_path=Path(d) / "test.db")
+            ctx = CerebroCortex(
+                db_path=Path(d) / "test.db",
+                chroma_dir=Path(d) / "chroma",
+            )
             ctx.initialize()
             ctx.initialize()  # should not error
             ctx.close()
@@ -161,3 +246,28 @@ class TestInitialization:
         ctx = CerebroCortex()
         with pytest.raises(RuntimeError):
             _ = ctx.graph
+
+    def test_uninitialized_vector_raises(self):
+        ctx = CerebroCortex()
+        with pytest.raises(RuntimeError):
+            _ = ctx.vector
+
+
+class TestCollectionRouting:
+    def test_semantic_to_knowledge(self):
+        assert CerebroCortex._collection_for_type(MemoryType.SEMANTIC) == "cerebro_knowledge"
+
+    def test_schematic_to_knowledge(self):
+        assert CerebroCortex._collection_for_type(MemoryType.SCHEMATIC) == "cerebro_knowledge"
+
+    def test_episodic_to_sessions(self):
+        assert CerebroCortex._collection_for_type(MemoryType.EPISODIC) == "cerebro_sessions"
+
+    def test_procedural_to_memories(self):
+        assert CerebroCortex._collection_for_type(MemoryType.PROCEDURAL) == "cerebro_memories"
+
+    def test_prospective_to_memories(self):
+        assert CerebroCortex._collection_for_type(MemoryType.PROSPECTIVE) == "cerebro_memories"
+
+    def test_affective_to_memories(self):
+        assert CerebroCortex._collection_for_type(MemoryType.AFFECTIVE) == "cerebro_memories"

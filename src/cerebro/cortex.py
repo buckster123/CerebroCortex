@@ -17,12 +17,21 @@ The recall pipeline:
 4. Hebbian strengthening -> learn from recall
 """
 
+import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from cerebro.activation.strength import record_access
-from cerebro.config import CHROMA_DIR, DATA_DIR, SQLITE_DB
+from cerebro.config import (
+    ALL_COLLECTIONS,
+    CHROMA_DIR,
+    COLLECTION_KNOWLEDGE,
+    COLLECTION_MEMORIES,
+    COLLECTION_SESSIONS,
+    DATA_DIR,
+    SQLITE_DB,
+)
 from cerebro.engines.amygdala import AffectEngine
 from cerebro.engines.association import LinkEngine
 from cerebro.engines.cerebellum import ProceduralEngine
@@ -33,8 +42,11 @@ from cerebro.engines.temporal import SemanticEngine
 from cerebro.engines.thalamus import GatingEngine
 from cerebro.models.episode import Episode
 from cerebro.models.memory import MemoryNode
+from cerebro.storage.chroma_store import ChromaStore
 from cerebro.storage.graph_store import GraphStore
 from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
+
+logger = logging.getLogger(__name__)
 
 
 class CerebroCortex:
@@ -51,6 +63,7 @@ class CerebroCortex:
 
         # Storage
         self._graph: Optional[GraphStore] = None
+        self._chroma: Optional[ChromaStore] = None
 
         # Engines (initialized in .initialize())
         self.links: Optional[LinkEngine] = None
@@ -68,6 +81,12 @@ class CerebroCortex:
             raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
         return self._graph
 
+    @property
+    def vector(self) -> ChromaStore:
+        if self._chroma is None:
+            raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
+        return self._chroma
+
     def initialize(self) -> None:
         """Initialize all storage backends and engines."""
         # Ensure data directory exists
@@ -76,6 +95,10 @@ class CerebroCortex:
         # Initialize graph store (SQLite + igraph)
         self._graph = GraphStore(self._db_path)
         self._graph.initialize()
+
+        # Initialize vector store (ChromaDB)
+        self._chroma = ChromaStore(self._chroma_dir)
+        self._chroma.initialize()
 
         # Initialize engines
         self.links = LinkEngine(self._graph)
@@ -93,7 +116,50 @@ class CerebroCortex:
         """Shut down all backends."""
         if self._graph:
             self._graph.close()
+        # ChromaDB PersistentClient auto-flushes on shutdown
         self._initialized = False
+
+    # =========================================================================
+    # Collection routing
+    # =========================================================================
+
+    @staticmethod
+    def _collection_for_type(memory_type: MemoryType) -> str:
+        """Determine which ChromaDB collection a memory belongs in."""
+        if memory_type in (MemoryType.SEMANTIC, MemoryType.SCHEMATIC):
+            return COLLECTION_KNOWLEDGE
+        elif memory_type == MemoryType.EPISODIC:
+            return COLLECTION_SESSIONS
+        else:  # PROCEDURAL, PROSPECTIVE, AFFECTIVE
+            return COLLECTION_MEMORIES
+
+    @staticmethod
+    def _build_where_filter(
+        memory_types: Optional[list[MemoryType]] = None,
+        agent_id: Optional[str] = None,
+        min_salience: float = 0.0,
+    ) -> Optional[dict[str, Any]]:
+        """Build a ChromaDB where clause for metadata filtering."""
+        clauses = []
+
+        if memory_types:
+            type_values = [mt.value for mt in memory_types]
+            if len(type_values) == 1:
+                clauses.append({"memory_type": type_values[0]})
+            else:
+                clauses.append({"memory_type": {"$in": type_values}})
+
+        if agent_id:
+            clauses.append({"agent_id": agent_id})
+
+        if min_salience > 0.0:
+            clauses.append({"salience": {"$gte": min_salience}})
+
+        if not clauses:
+            return None
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"$and": clauses}
 
     # =========================================================================
     # REMEMBER - Store a new memory
@@ -116,7 +182,7 @@ class CerebroCortex:
         1. Thalamus gating (dedup, noise filter, layer assignment)
         2. Semantic engine (concept extraction)
         3. Amygdala (emotional analysis, salience adjustment)
-        4. Graph store (persist node)
+        4. Graph store + Vector store (persist node)
         5. Link engine (auto-link to related memories)
         6. Episode tracking (add to current episode if active)
 
@@ -165,12 +231,16 @@ class CerebroCortex:
         # 5. Persist to graph store
         self._graph.add_node(node)
 
-        # 6. Auto-link
+        # 6. Persist to vector store (ChromaDB)
+        coll = self._collection_for_type(node.metadata.memory_type)
+        self._chroma.add_node(coll, node)
+
+        # 7. Auto-link
         self.links.auto_link_on_store(node, context_ids=context_ids)
         self.semantic.create_semantic_links(node)
         self.affect.create_affective_links(node)
 
-        # 7. Episode tracking
+        # 8. Episode tracking
         if session_id and self.episodes:
             self.episodes.add_to_current_episode(session_id, node.id)
 
@@ -192,14 +262,11 @@ class CerebroCortex:
         """Recall memories through the full retrieval pipeline.
 
         Pipeline:
-        1. Vector search via ChromaDB (seeds)  [TODO: requires ChromaStore]
-        2. Spreading activation from seeds
+        1. Vector search via ChromaDB (semantic seeds)
+        2. Spreading activation from seeds + context
         3. ACT-R + FSRS combined scoring
         4. Hebbian strengthening of recalled paths
         5. Update access timestamps
-
-        For now (without ChromaStore integration), uses graph-only recall
-        with spreading activation from context_ids.
 
         Args:
             query: Search query text
@@ -212,21 +279,47 @@ class CerebroCortex:
         Returns:
             List of (MemoryNode, score) tuples, sorted by score descending.
         """
-        seed_ids = context_ids or []
-        seed_weights = [0.8] * len(seed_ids)
+        # 1. Vector search across all ChromaDB collections
+        where_filter = self._build_where_filter(memory_types, agent_id, min_salience)
+        vector_results: dict[str, float] = {}
+        per_collection = max(top_k, 10)
 
-        # Spreading activation from seeds
-        activated = {}
+        for coll_name in ALL_COLLECTIONS:
+            hits = self._chroma.search(
+                collection=coll_name,
+                query=query,
+                n_results=per_collection,
+                where=where_filter,
+            )
+            for hit in hits:
+                doc_id = hit["id"]
+                similarity = hit.get("similarity") or 0.0
+                # Keep best similarity if same ID appears in multiple collections
+                if doc_id not in vector_results or similarity > vector_results[doc_id]:
+                    vector_results[doc_id] = similarity
+
+        # 2. Spreading activation from vector seeds + context_ids
+        seed_ids = list(vector_results.keys())
+        seed_weights = [vector_results[sid] for sid in seed_ids]
+
+        # Add explicit context seeds
+        if context_ids:
+            for cid in context_ids:
+                if cid not in vector_results:
+                    seed_ids.append(cid)
+                    seed_weights.append(0.8)
+
+        activated: dict[str, float] = {}
         if seed_ids:
             activated = self.links.spread_activation(
                 seed_ids=seed_ids,
                 seed_weights=seed_weights,
             )
 
-        # Get candidate memory IDs
-        candidate_ids = list(activated.keys()) if activated else self._graph.get_all_node_ids()
+        # 3. Merge candidates: vector hits + activated nodes
+        candidate_ids = list(set(vector_results.keys()) | set(activated.keys()))
 
-        # Filter by type/agent/salience
+        # Filter by type/agent/salience (belt-and-suspenders with ChromaDB where)
         filtered_ids = []
         for mid in candidate_ids:
             node = self._graph.get_node(mid)
@@ -240,21 +333,22 @@ class CerebroCortex:
                 continue
             filtered_ids.append(mid)
 
-        # Rank using executive engine
+        # 4. Rank using executive engine (with vector similarities)
         ranked = self.executive.rank_results(
             memory_ids=filtered_ids,
+            vector_similarities=vector_results,
             associative_scores=activated,
         )
 
         # Take top_k
         top_results = ranked[:top_k]
 
-        # Hebbian strengthening of co-activated memories
+        # 5. Hebbian strengthening of co-activated memories
         result_ids = [mid for mid, _ in top_results]
         if len(result_ids) > 1:
             self.links.strengthen_co_activated(result_ids)
 
-        # Update access timestamps for recalled memories
+        # 6. Update access timestamps for recalled memories
         now = time.time()
         results = []
         for mid, score in top_results:
@@ -321,6 +415,7 @@ class CerebroCortex:
         graph_stats = self._graph.stats()
         return {
             **graph_stats,
+            "vector_store": self._chroma.count_all() if self._chroma else {},
             "schemas": self.schemas.count_schemas(),
             "initialized": self._initialized,
         }

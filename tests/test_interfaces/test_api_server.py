@@ -14,7 +14,7 @@ from cerebro.interfaces.api_server import app, get_cortex
 def cortex():
     """CerebroCortex with temporary database for API tests."""
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_api.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_api.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         yield ctx
         ctx.close()

@@ -142,8 +142,13 @@ class ChromaStore(VectorStore):
         """Semantic search. Returns list of result dicts with similarity scores."""
         coll = self._get_collection(collection)
 
+        # Embed query ourselves and pass as query_embeddings to avoid
+        # ChromaDB 1.4+ embedding function protocol mismatches
+        ef = self._get_embedding_fn()
+        query_embedding = ef([query])[0]  # Single embedding as numpy array or list
+
         kwargs: dict[str, Any] = {
-            "query_texts": [query],
+            "query_embeddings": [query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding],
             "n_results": min(n_results, coll.count()) if coll.count() > 0 else 1,
             "include": ["documents", "metadatas", "distances"],
         }

@@ -248,6 +248,8 @@ class NeoCortexImporter:
 
         try:
             self.cortex.graph.add_node(node)
+            coll = self.cortex._collection_for_type(node.metadata.memory_type)
+            self.cortex.vector.add_node(coll, node)
             self._report.memories_imported += 1
             if old_id:
                 self._report.id_mapping[old_id] = node.id

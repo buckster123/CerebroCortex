@@ -66,7 +66,7 @@ class MockLLMClient:
 def cortex():
     """CerebroCortex with temporary database."""
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_dream.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_dream.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         yield ctx
         ctx.close()

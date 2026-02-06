@@ -13,7 +13,7 @@ from cerebro.types import MemoryType
 @pytest.fixture
 def cortex():
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_md_import.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_md_import.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         yield ctx
         ctx.close()

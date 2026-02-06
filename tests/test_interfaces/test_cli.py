@@ -15,7 +15,7 @@ import cerebro.interfaces.cli as cli_mod
 def cortex():
     """CerebroCortex with temporary database for CLI tests."""
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_cli.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_cli.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         yield ctx
         ctx.close()

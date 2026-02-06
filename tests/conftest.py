@@ -28,6 +28,16 @@ def graph_store(temp_dir):
 
 
 @pytest.fixture
+def chroma_store(temp_dir):
+    """ChromaStore with temporary directory."""
+    from cerebro.storage.chroma_store import ChromaStore
+
+    store = ChromaStore(persist_path=temp_dir / "chroma")
+    store.initialize()
+    yield store
+
+
+@pytest.fixture
 def sample_memories():
     """Pre-built sample memories for testing."""
     return [

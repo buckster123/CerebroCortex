@@ -15,7 +15,7 @@ from cerebro.interfaces.cli import cli
 @pytest.fixture
 def cortex():
     with tempfile.TemporaryDirectory() as d:
-        ctx = CerebroCortex(db_path=Path(d) / "test_cli_import.db")
+        ctx = CerebroCortex(db_path=Path(d) / "test_cli_import.db", chroma_dir=Path(d) / "chroma")
         ctx.initialize()
         cli_mod._cortex = ctx
         yield ctx
