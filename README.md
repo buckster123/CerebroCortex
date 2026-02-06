@@ -1021,7 +1021,7 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 
 ## Roadmap
 
-- [ ] Wire ChromaDB vector search into recall pipeline (currently graph-only mode)
+- [x] Wire ChromaDB vector search into recall pipeline
 - [ ] Run Dream Engine on imported data to discover links
 - [ ] pgvector backend option for multi-node deployments
 - [ ] WebSocket real-time updates for dashboard

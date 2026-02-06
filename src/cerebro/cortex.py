@@ -419,3 +419,40 @@ class CerebroCortex:
             "schemas": self.schemas.count_schemas(),
             "initialized": self._initialized,
         }
+
+    def backfill_vector_store(self) -> dict[str, int]:
+        """Backfill ChromaDB from GraphStore for memories missing from vector search.
+
+        Reads all nodes from SQLite, checks which are missing from ChromaDB,
+        and inserts them. Returns counts by collection.
+        """
+        if not self._initialized:
+            raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
+        all_ids = self._graph.get_all_node_ids()
+        existing: set[str] = set()
+        for coll_name in ALL_COLLECTIONS:
+            for rec in self._chroma.get(coll_name, all_ids):
+                existing.add(rec["id"])
+
+        missing_ids = [nid for nid in all_ids if nid not in existing]
+        if not missing_ids:
+            logger.info("Backfill: all memories already in vector store")
+            return {"total": 0}
+
+        counts: dict[str, int] = {}
+        errors = 0
+        for nid in missing_ids:
+            node = self._graph.get_node(nid)
+            if node is None:
+                continue
+            coll = self._collection_for_type(node.metadata.memory_type)
+            try:
+                self._chroma.add_node(coll, node)
+                counts[coll] = counts.get(coll, 0) + 1
+            except Exception as e:
+                logger.error(f"Backfill failed for {nid}: {e}")
+                errors += 1
+
+        total = sum(counts.values())
+        logger.info(f"Backfill complete: {total} memories added, {errors} errors")
+        return {**counts, "total": total, "errors": errors}

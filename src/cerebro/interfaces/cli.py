@@ -515,6 +515,34 @@ def health(as_json):
     click.echo(f"\nPending intentions: {len(intentions)}")
 
 
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def backfill(as_json):
+    """Backfill ChromaDB vector store from GraphStore.
+
+    Finds memories that exist in SQLite/igraph but are missing from
+    ChromaDB and inserts them. Safe to run multiple times.
+    """
+    ctx = get_cortex()
+    if not as_json:
+        click.echo("Scanning for memories missing from vector store...")
+    result = ctx.backfill_vector_store()
+    if as_json:
+        _json_out(result)
+    else:
+        total = result.get("total", 0)
+        errors = result.get("errors", 0)
+        if total == 0:
+            click.echo("All memories already in vector store — nothing to do.")
+        else:
+            click.echo(f"Backfilled {total} memories into ChromaDB:")
+            for k, v in result.items():
+                if k not in ("total", "errors"):
+                    click.echo(f"  {k}: {v}")
+            if errors:
+                click.echo(f"  errors: {errors}")
+
+
 # =============================================================================
 # Dream Engine
 # =============================================================================
