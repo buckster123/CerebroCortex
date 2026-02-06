@@ -43,9 +43,24 @@ class SentenceTransformerEmbeddings:
 
     def _load_model(self):
         if self._model is None:
+            import io
+            import sys
+
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading sentence-transformer model: {self.model_name}")
-            self._model = SentenceTransformer(self.model_name)
+            # Redirect stdout AND stderr during model load to suppress
+            # safetensors/tqdm progress bars that break CLI JSON output.
+            # Click's CliRunner(mix_stderr=True) merges stderr into stdout,
+            # so we must capture both streams.
+            saved_stdout = sys.stdout
+            saved_stderr = sys.stderr
+            sys.stdout = io.StringIO()
+            sys.stderr = io.StringIO()
+            try:
+                self._model = SentenceTransformer(self.model_name)
+            finally:
+                sys.stdout = saved_stdout
+                sys.stderr = saved_stderr
         return self._model
 
     def name(self) -> str:

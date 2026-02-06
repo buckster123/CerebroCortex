@@ -3,6 +3,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
+VENV_PYTHON="${SCRIPT_DIR}/venv/bin/python"
 
-exec python3 -m cerebro.interfaces.api_server "$@"
+# Use venv if available, fall back to system python
+if [ -x "$VENV_PYTHON" ]; then
+    exec "$VENV_PYTHON" -m cerebro.interfaces.api_server "$@"
+else
+    export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
+    exec python3 -m cerebro.interfaces.api_server "$@"
+fi
