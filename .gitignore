@@ -39,5 +39,6 @@ neocortex-source/
 # Raw data / research papers
 raw_data/
 
-# Screenshots
+# Screenshots (but allow assets/)
 *.png
+!assets/*.png
