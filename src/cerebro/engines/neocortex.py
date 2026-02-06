@@ -23,8 +23,9 @@ from cerebro.types import LinkType, MemoryLayer, MemoryType
 class SchemaEngine:
     """Extracts and manages schematic memories (abstract patterns)."""
 
-    def __init__(self, graph: GraphStore):
+    def __init__(self, graph: GraphStore, vector_store=None):
         self._graph = graph
+        self._vector = vector_store
 
     def create_schema(
         self,
@@ -62,6 +63,12 @@ class SchemaEngine:
         )
 
         self._graph.add_node(node)
+
+        # Dual-write to vector store
+        if self._vector:
+            from cerebro.cortex import CerebroCortex
+            coll = CerebroCortex._collection_for_type(node.metadata.memory_type)
+            self._vector.add_node(coll, node)
 
         # Link to source memories
         for source_id in source_ids:

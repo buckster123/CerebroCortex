@@ -106,9 +106,9 @@ class CerebroCortex:
         self.affect = AffectEngine(self._graph)
         self.semantic = SemanticEngine(self._graph)
         self.episodes = EpisodicEngine(self._graph)
-        self.procedural = ProceduralEngine(self._graph)
-        self.executive = ExecutiveEngine(self._graph)
-        self.schemas = SchemaEngine(self._graph)
+        self.procedural = ProceduralEngine(self._graph, vector_store=self._chroma)
+        self.executive = ExecutiveEngine(self._graph, vector_store=self._chroma)
+        self.schemas = SchemaEngine(self._graph, vector_store=self._chroma)
 
         self._initialized = True
 

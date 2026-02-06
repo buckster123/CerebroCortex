@@ -29,8 +29,9 @@ from cerebro.types import MemoryLayer, MemoryType
 class ExecutiveEngine:
     """Executive control: priorities, promotions, and prospective memory."""
 
-    def __init__(self, graph: GraphStore):
+    def __init__(self, graph: GraphStore, vector_store=None):
         self._graph = graph
+        self._vector = vector_store
 
     # =========================================================================
     # Prospective memory (intentions, TODOs)
@@ -61,6 +62,13 @@ class ExecutiveEngine:
             strength=StrengthState(stability=5.0),  # TODOs need to stick around
         )
         self._graph.add_node(node)
+
+        # Dual-write to vector store
+        if self._vector:
+            from cerebro.cortex import CerebroCortex
+            coll = CerebroCortex._collection_for_type(node.metadata.memory_type)
+            self._vector.add_node(coll, node)
+
         return node
 
     def get_pending_intentions(
