@@ -27,12 +27,16 @@ class TestLLMClientInit:
     def test_default_init(self):
         client = LLMClient()
         assert client.primary_name == "anthropic"
-        assert client.fallback_name == "ollama"
+        assert client.fallback_name in ("ollama", "openai_compat")
         assert client.total_calls == 0
 
     def test_explicit_provider(self):
         client = LLMClient(provider="ollama", model="phi3:mini")
         assert client.primary_name == "ollama"
+
+    def test_openai_compat_provider(self):
+        client = LLMClient(provider="openai_compat", model="some-model")
+        assert client.primary_name == "openai_compat"
 
     def test_invalid_provider(self):
         with pytest.raises(ValueError, match="Unknown LLM provider"):
@@ -43,7 +47,7 @@ class TestLLMClientInit:
         s = client.stats()
         assert s["total_calls"] == 0
         assert s["primary"] == "anthropic"
-        assert s["fallback"] == "ollama"
+        assert s["fallback"] in ("ollama", "openai_compat")
 
 
 class TestLLMClientFailover:

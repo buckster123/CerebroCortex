@@ -119,12 +119,15 @@ DREAM_REM_PAIR_CHECKS = 10
 DREAM_REM_MIN_CONNECTION_STRENGTH = 0.4
 
 # LLM configuration
-LLM_PRIMARY_PROVIDER = "anthropic"  # "anthropic", "openai", "ollama"
+LLM_PRIMARY_PROVIDER = "anthropic"  # "anthropic", "ollama", "openai_compat"
 LLM_PRIMARY_MODEL = "claude-sonnet-4-5-20250929"
-LLM_FALLBACK_PROVIDER = "ollama"
-LLM_FALLBACK_MODEL = "phi3:mini"
+LLM_FALLBACK_PROVIDER = "openai_compat"  # LM Studio / vLLM / LocalAI
+LLM_FALLBACK_MODEL = "qwen/qwen3-vl-8b"
 LLM_TEMPERATURE = 0.7
 LLM_MAX_TOKENS = 1024
+
+# OpenAI-compatible API (LM Studio, vLLM, LocalAI, etc.)
+OPENAI_COMPAT_BASE_URL = "http://192.168.0.107:1234"
 
 # =============================================================================
 # Server

@@ -26,6 +26,7 @@ from cerebro.config import (
     LLM_PRIMARY_MODEL,
     LLM_PRIMARY_PROVIDER,
     LLM_TEMPERATURE,
+    OPENAI_COMPAT_BASE_URL,
     OLLAMA_BASE_URL,
 )
 
@@ -162,6 +163,59 @@ class OllamaProvider:
 
 
 # =============================================================================
+# OpenAI-compatible provider (LM Studio, vLLM, LocalAI, etc.)
+# =============================================================================
+
+class OpenAICompatProvider:
+    """OpenAI-compatible API provider (LM Studio, vLLM, LocalAI, etc.)."""
+
+    def __init__(
+        self,
+        model: str = LLM_FALLBACK_MODEL,
+        base_url: str = OPENAI_COMPAT_BASE_URL,
+    ):
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        max_tokens: int = LLM_MAX_TOKENS,
+        temperature: float = LLM_TEMPERATURE,
+    ) -> LLMResponse:
+        url = f"{self.base_url}/v1/chat/completions"
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+
+        resp = requests.post(url, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+
+        text = data["choices"][0]["message"]["content"]
+        tokens = data.get("usage", {})
+        total_tokens = tokens.get("total_tokens", 0)
+
+        return LLMResponse(
+            text=text,
+            provider="openai_compat",
+            model=self.model,
+            tokens_used=total_tokens,
+        )
+
+
+# =============================================================================
 # Unified LLM client with auto-failover
 # =============================================================================
 
@@ -199,6 +253,8 @@ class LLMClient:
             return AnthropicProvider(model=model)
         elif provider == "ollama":
             return OllamaProvider(model=model)
+        elif provider == "openai_compat":
+            return OpenAICompatProvider(model=model)
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
