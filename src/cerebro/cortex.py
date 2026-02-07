@@ -17,6 +17,7 @@ The recall pipeline:
 4. Hebbian strengthening -> learn from recall
 """
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -381,6 +382,79 @@ class CerebroCortex:
         )
 
     # =========================================================================
+    # GET / DELETE / UPDATE single memory
+    # =========================================================================
+
+    def get_memory(self, memory_id: str) -> Optional[MemoryNode]:
+        """Get a single memory by ID."""
+        return self._graph.get_node(memory_id)
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory from both GraphStore and ChromaDB.
+
+        Returns True if found and deleted.
+        """
+        node = self._graph.get_node(memory_id)
+        if not node:
+            return False
+
+        # Delete from graph store (SQLite + igraph rebuild)
+        self._graph.delete_node(memory_id)
+
+        # Delete from ChromaDB
+        coll = self._collection_for_type(node.metadata.memory_type)
+        self._chroma.delete(coll, [memory_id])
+
+        return True
+
+    def update_memory(
+        self,
+        memory_id: str,
+        content: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        salience: Optional[float] = None,
+        visibility: Optional[Visibility] = None,
+    ) -> Optional[MemoryNode]:
+        """Update a memory's content and/or metadata.
+
+        If content is provided, re-embeds in ChromaDB.
+        Returns the updated MemoryNode, or None if not found.
+        """
+        node = self._graph.get_node(memory_id)
+        if not node:
+            return None
+
+        # Build metadata updates
+        meta_updates = {}
+        if tags is not None:
+            meta_updates["tags_json"] = json.dumps(tags)
+        if salience is not None:
+            meta_updates["salience"] = salience
+        if visibility is not None:
+            meta_updates["visibility"] = visibility.value
+
+        # Update content in SQLite (separate from metadata)
+        if content is not None:
+            content_hash = self._graph._content_hash(content)
+            self._graph.conn.execute(
+                "UPDATE memory_nodes SET content = ?, content_hash = ? WHERE id = ?",
+                (content, content_hash, memory_id),
+            )
+            self._graph.conn.commit()
+
+        if meta_updates:
+            self._graph.update_node_metadata(memory_id, **meta_updates)
+
+        # Re-fetch updated node
+        updated = self._graph.get_node(memory_id)
+
+        # Sync to ChromaDB (re-embeds if content changed)
+        coll = self._collection_for_type(updated.metadata.memory_type)
+        self._chroma.update_node(coll, updated)
+
+        return updated
+
+    # =========================================================================
     # Episode management (delegates to hippocampus)
     # =========================================================================
 
@@ -405,6 +479,143 @@ class CerebroCortex:
         return self.episodes.end_episode(
             episode_id, summary=summary, valence=valence,
         )
+
+    def list_episodes(
+        self,
+        limit: int = 10,
+        agent_id: Optional[str] = None,
+    ) -> list[Episode]:
+        """Get recent episodes."""
+        return self.episodes.get_recent_episodes(limit=limit, agent_id=agent_id)
+
+    def get_episode(self, episode_id: str) -> Optional[Episode]:
+        """Get an episode by ID with all its steps."""
+        return self._graph.get_episode(episode_id)
+
+    def get_episode_memories(self, episode_id: str) -> list[MemoryNode]:
+        """Get all memories in an episode, ordered by position."""
+        memory_ids = self.episodes.get_episode_memories(episode_id)
+        return [n for mid in memory_ids if (n := self._graph.get_node(mid))]
+
+    # =========================================================================
+    # Intentions (prospective memory)
+    # =========================================================================
+
+    def store_intention(
+        self,
+        content: str,
+        tags: Optional[list[str]] = None,
+        agent_id: str = "CLAUDE",
+        salience: float = 0.7,
+    ) -> MemoryNode:
+        """Store a prospective memory (future intention / TODO)."""
+        return self.executive.store_intention(
+            content=content, tags=tags, agent_id=agent_id, salience=salience,
+        )
+
+    def list_intentions(
+        self,
+        agent_id: Optional[str] = None,
+        min_salience: float = 0.3,
+    ) -> list[MemoryNode]:
+        """Get all pending intentions."""
+        return self.executive.get_pending_intentions(
+            agent_id=agent_id, min_salience=min_salience,
+        )
+
+    def resolve_intention(self, memory_id: str) -> bool:
+        """Mark an intention as resolved (lowers salience)."""
+        return self.executive.resolve_intention(memory_id)
+
+    # =========================================================================
+    # Graph exploration (LinkEngine)
+    # =========================================================================
+
+    def find_path(self, source_id: str, target_id: str) -> Optional[list[str]]:
+        """Find shortest path between two memories in the graph."""
+        return self.links.find_path(source_id, target_id)
+
+    def get_common_neighbors(self, id_a: str, id_b: str) -> list[str]:
+        """Find memories connected to both A and B."""
+        return self.links.get_common_neighbors(id_a, id_b)
+
+    # =========================================================================
+    # Schemas (SchemaEngine / Neocortex)
+    # =========================================================================
+
+    def create_schema(
+        self,
+        content: str,
+        source_ids: list[str],
+        tags: Optional[list[str]] = None,
+        agent_id: str = "CLAUDE",
+    ) -> MemoryNode:
+        """Create an abstract schema from source memories."""
+        return self.schemas.create_schema(
+            content=content, source_ids=source_ids, tags=tags, agent_id=agent_id,
+        )
+
+    def list_schemas(self, agent_id: Optional[str] = None) -> list[MemoryNode]:
+        """Get all schematic memories."""
+        return self.schemas.get_all_schemas(agent_id=agent_id)
+
+    def find_matching_schemas(
+        self,
+        tags: Optional[list[str]] = None,
+        concepts: Optional[list[str]] = None,
+    ) -> list[MemoryNode]:
+        """Find schemas matching tags or concepts."""
+        return self.schemas.find_matching_schemas(tags=tags, concepts=concepts)
+
+    def get_schema_sources(self, schema_id: str) -> list[str]:
+        """Get source memory IDs for a schema."""
+        return self.schemas.get_schema_sources(schema_id)
+
+    # =========================================================================
+    # Procedures (ProceduralEngine / Cerebellum)
+    # =========================================================================
+
+    def store_procedure(
+        self,
+        content: str,
+        tags: Optional[list[str]] = None,
+        derived_from: Optional[list[str]] = None,
+        agent_id: str = "CLAUDE",
+    ) -> MemoryNode:
+        """Store a procedural memory (strategy/workflow)."""
+        return self.procedural.store_procedure(
+            content=content, tags=tags, derived_from=derived_from, agent_id=agent_id,
+        )
+
+    def list_procedures(
+        self,
+        agent_id: Optional[str] = None,
+        min_salience: float = 0.0,
+    ) -> list[MemoryNode]:
+        """Get all procedural memories."""
+        return self.procedural.get_all_procedures(
+            agent_id=agent_id, min_salience=min_salience,
+        )
+
+    def find_relevant_procedures(
+        self,
+        tags: Optional[list[str]] = None,
+        concepts: Optional[list[str]] = None,
+    ) -> list[MemoryNode]:
+        """Find procedures matching tags or concepts."""
+        return self.procedural.find_relevant_procedures(tags=tags, concepts=concepts)
+
+    def record_procedure_outcome(self, procedure_id: str, success: bool) -> bool:
+        """Record success/failure of a procedure."""
+        return self.procedural.record_outcome(procedure_id, success)
+
+    # =========================================================================
+    # Emotional summary (AffectEngine / Amygdala)
+    # =========================================================================
+
+    def get_emotional_summary(self) -> dict[str, int]:
+        """Get breakdown of memories by emotional valence."""
+        return self.affect.get_emotional_summary()
 
     # =========================================================================
     # Stats

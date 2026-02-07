@@ -21,6 +21,13 @@ Endpoints:
     POST /episodes/start       Start episode
     POST /episodes/{id}/step   Add step
     POST /episodes/{id}/end    End episode
+    GET  /episodes             List recent episodes
+    GET  /episodes/{id}        Get episode by ID
+    GET  /episodes/{id}/memories  Get episode memories
+
+    POST /intentions           Store intention
+    GET  /intentions           List pending intentions
+    POST /intentions/{id}/resolve  Resolve intention
 
     POST /sessions/save   Save session note
     GET  /sessions        Get session notes
@@ -32,6 +39,20 @@ Endpoints:
     GET  /graph/stats            Graph stats
     GET  /graph/data             Graph data for visualization
     GET  /graph/neighbors/{id}   Neighbors
+    GET  /graph/path/{src}/{tgt} Find shortest path
+    GET  /graph/common/{a}/{b}   Common neighbors
+
+    POST /schemas                Create schema
+    GET  /schemas                List schemas
+    GET  /schemas/match          Find matching schemas
+    GET  /schemas/{id}/sources   Get schema sources
+
+    POST /procedures             Store procedure
+    GET  /procedures             List procedures
+    GET  /procedures/match       Find relevant procedures
+    POST /procedures/{id}/outcome  Record procedure outcome
+
+    GET  /emotions/summary       Emotional valence breakdown
 """
 
 import json
@@ -159,6 +180,33 @@ class RegisterAgentRequest(BaseModel):
     color: str = "#888888"
     symbol: str = "A"
 
+class IntentionRequest(BaseModel):
+    content: str
+    tags: Optional[list[str]] = None
+    agent_id: str = "CLAUDE"
+    salience: float = 0.7
+
+class UpdateMemoryRequest(BaseModel):
+    content: Optional[str] = None
+    tags: Optional[list[str]] = None
+    salience: Optional[float] = None
+    visibility: Optional[str] = None
+
+class CreateSchemaRequest(BaseModel):
+    content: str
+    source_ids: list[str]
+    tags: Optional[list[str]] = None
+    agent_id: str = "CLAUDE"
+
+class StoreProcedureRequest(BaseModel):
+    content: str
+    tags: Optional[list[str]] = None
+    derived_from: Optional[list[str]] = None
+    agent_id: str = "CLAUDE"
+
+class ProcedureOutcomeRequest(BaseModel):
+    success: bool
+
 
 # =============================================================================
 # Info & health
@@ -174,11 +222,20 @@ async def root():
         "endpoints": [
             "GET /health", "GET /stats", "GET /ui", "GET /q/{query}",
             "POST /remember", "POST /recall", "POST /associate",
+            "GET /memory/{id}", "DELETE /memory/{id}", "PATCH /memory/{id}",
             "POST /episodes/start", "POST /episodes/{id}/step", "POST /episodes/{id}/end",
+            "GET /episodes", "GET /episodes/{id}", "GET /episodes/{id}/memories",
+            "POST /intentions", "GET /intentions", "POST /intentions/{id}/resolve",
             "POST /sessions/save", "GET /sessions",
             "GET /agents", "POST /agents",
             "GET /memory/health", "GET /graph/stats", "GET /graph/data",
             "GET /graph/neighbors/{id}",
+            "GET /graph/path/{src}/{tgt}", "GET /graph/common/{a}/{b}",
+            "POST /schemas", "GET /schemas", "GET /schemas/match",
+            "GET /schemas/{id}/sources",
+            "POST /procedures", "GET /procedures", "GET /procedures/match",
+            "POST /procedures/{id}/outcome",
+            "GET /emotions/summary",
         ],
     }
 
@@ -424,6 +481,72 @@ async def episode_end(episode_id: str, req: EpisodeEndRequest):
     }
 
 
+
+@app.get("/episodes")
+async def list_episodes(
+    limit: int = Query(10, ge=1, le=100),
+    agent_id: Optional[str] = None,
+):
+    """List recent episodes."""
+    ctx = get_cortex()
+    episodes = ctx.list_episodes(limit=limit, agent_id=agent_id)
+    return {
+        "count": len(episodes),
+        "episodes": [
+            {
+                "id": ep.id,
+                "title": ep.title,
+                "steps": len(ep.steps),
+                "valence": ep.overall_valence.value,
+                "started_at": ep.started_at.isoformat() if ep.started_at else None,
+                "ended_at": ep.ended_at.isoformat() if ep.ended_at else None,
+                "consolidated": ep.consolidated,
+            }
+            for ep in episodes
+        ],
+    }
+
+
+@app.get("/episodes/{episode_id}")
+async def get_episode(episode_id: str):
+    """Get a single episode by ID."""
+    ctx = get_cortex()
+    episode = ctx.get_episode(episode_id)
+    if episode is None:
+        raise HTTPException(404, f"Episode not found: {episode_id}")
+    return {
+        "id": episode.id,
+        "title": episode.title,
+        "steps": len(episode.steps),
+        "valence": episode.overall_valence.value,
+        "started_at": episode.started_at.isoformat() if episode.started_at else None,
+        "ended_at": episode.ended_at.isoformat() if episode.ended_at else None,
+        "consolidated": episode.consolidated,
+    }
+
+
+@app.get("/episodes/{episode_id}/memories")
+async def get_episode_memories(episode_id: str):
+    """Get all memories in an episode, ordered by position."""
+    ctx = get_cortex()
+    memories = ctx.get_episode_memories(episode_id)
+    return {
+        "episode_id": episode_id,
+        "count": len(memories),
+        "memories": [
+            {
+                "id": node.id,
+                "content": node.content,
+                "type": node.metadata.memory_type.value,
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in memories
+        ],
+    }
+
+
 # =============================================================================
 # Sessions
 # =============================================================================
@@ -514,6 +637,64 @@ async def session_recall(
             for s in sessions
         ],
     }
+
+
+# =============================================================================
+# Intentions (prospective memory)
+# =============================================================================
+
+@app.post("/intentions")
+async def store_intention(req: IntentionRequest):
+    """Store a prospective memory (future intention / TODO)."""
+    ctx = get_cortex()
+    node = ctx.store_intention(
+        content=req.content,
+        tags=req.tags,
+        agent_id=req.agent_id,
+        salience=req.salience,
+    )
+    return {
+        "id": node.id,
+        "content": node.content,
+        "salience": round(node.metadata.salience, 3),
+        "tags": node.metadata.tags,
+        "agent_id": node.metadata.agent_id,
+        "created_at": node.created_at.isoformat(),
+    }
+
+
+@app.get("/intentions")
+async def list_intentions(
+    agent_id: Optional[str] = None,
+    min_salience: float = Query(0.3, ge=0.0, le=1.0),
+):
+    """List pending intentions."""
+    ctx = get_cortex()
+    intentions = ctx.list_intentions(agent_id=agent_id, min_salience=min_salience)
+    return {
+        "count": len(intentions),
+        "intentions": [
+            {
+                "id": node.id,
+                "content": node.content,
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "agent_id": node.metadata.agent_id,
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in intentions
+        ],
+    }
+
+
+@app.post("/intentions/{memory_id}/resolve")
+async def resolve_intention(memory_id: str):
+    """Resolve a pending intention."""
+    ctx = get_cortex()
+    success = ctx.resolve_intention(memory_id)
+    if not success:
+        raise HTTPException(404, f"Intention not found or already resolved: {memory_id}")
+    return {"resolved": True, "id": memory_id}
 
 
 # =============================================================================
@@ -683,6 +864,304 @@ async def graph_neighbors(
             }
             for nid, w, lt in neighbors
         ],
+    }
+
+
+# =============================================================================
+# Graph exploration (path finding, common neighbors)
+# =============================================================================
+
+@app.get("/graph/path/{source_id}/{target_id}")
+async def graph_find_path(source_id: str, target_id: str):
+    """Find shortest path between two memories in the associative graph."""
+    ctx = get_cortex()
+    path = ctx.find_path(source_id, target_id)
+    if path is None:
+        raise HTTPException(404, f"No path found between {source_id} and {target_id}")
+    return {
+        "source": source_id,
+        "target": target_id,
+        "path": path,
+        "length": len(path),
+    }
+
+
+@app.get("/graph/common/{id_a}/{id_b}")
+async def graph_common_neighbors(id_a: str, id_b: str):
+    """Find memories connected to both A and B."""
+    ctx = get_cortex()
+    common_ids = ctx.get_common_neighbors(id_a, id_b)
+    results = []
+    for cid in common_ids:
+        node = ctx.graph.get_node(cid)
+        results.append({
+            "id": cid,
+            "content": node.content[:200] if node else "",
+            "type": node.metadata.memory_type.value if node else "unknown",
+        })
+    return {
+        "id_a": id_a,
+        "id_b": id_b,
+        "count": len(results),
+        "common": results,
+    }
+
+
+# =============================================================================
+# Schemas (schematic memory / neocortex)
+# =============================================================================
+
+@app.post("/schemas")
+async def create_schema(req: CreateSchemaRequest):
+    """Create an abstract schema from source memories."""
+    ctx = get_cortex()
+    node = ctx.create_schema(
+        content=req.content,
+        source_ids=req.source_ids,
+        tags=req.tags,
+        agent_id=req.agent_id,
+    )
+    return {
+        "id": node.id,
+        "content": node.content,
+        "type": node.metadata.memory_type.value,
+        "salience": round(node.metadata.salience, 3),
+        "tags": node.metadata.tags,
+        "source_ids": req.source_ids,
+        "created_at": node.created_at.isoformat(),
+    }
+
+
+@app.get("/schemas")
+async def list_schemas(agent_id: Optional[str] = None):
+    """List all schematic memories."""
+    ctx = get_cortex()
+    schemas = ctx.list_schemas(agent_id=agent_id)
+    return {
+        "count": len(schemas),
+        "schemas": [
+            {
+                "id": node.id,
+                "content": node.content[:300],
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "concepts": node.metadata.concepts[:10],
+                "agent_id": node.metadata.agent_id,
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in schemas
+        ],
+    }
+
+
+@app.get("/schemas/match")
+async def match_schemas(
+    tags: Optional[str] = Query(None, description="Comma-separated tags"),
+    concepts: Optional[str] = Query(None, description="Comma-separated concepts"),
+):
+    """Find schemas matching given tags or concepts."""
+    ctx = get_cortex()
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    concept_list = [c.strip() for c in concepts.split(",")] if concepts else None
+    schemas = ctx.find_matching_schemas(tags=tag_list, concepts=concept_list)
+    return {
+        "count": len(schemas),
+        "schemas": [
+            {
+                "id": node.id,
+                "content": node.content[:300],
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "concepts": node.metadata.concepts[:10],
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in schemas
+        ],
+    }
+
+
+@app.get("/schemas/{schema_id}/sources")
+async def get_schema_sources(schema_id: str):
+    """Get the source memory IDs that a schema was derived from."""
+    ctx = get_cortex()
+    source_ids = ctx.get_schema_sources(schema_id)
+    return {
+        "schema_id": schema_id,
+        "count": len(source_ids),
+        "source_ids": source_ids,
+    }
+
+
+# =============================================================================
+# Procedures (procedural memory / cerebellum)
+# =============================================================================
+
+@app.post("/procedures")
+async def store_procedure(req: StoreProcedureRequest):
+    """Store a procedural memory (strategy/workflow)."""
+    ctx = get_cortex()
+    node = ctx.store_procedure(
+        content=req.content,
+        tags=req.tags,
+        derived_from=req.derived_from,
+        agent_id=req.agent_id,
+    )
+    return {
+        "id": node.id,
+        "content": node.content,
+        "type": node.metadata.memory_type.value,
+        "salience": round(node.metadata.salience, 3),
+        "tags": node.metadata.tags,
+        "agent_id": node.metadata.agent_id,
+        "created_at": node.created_at.isoformat(),
+    }
+
+
+@app.get("/procedures")
+async def list_procedures(
+    agent_id: Optional[str] = None,
+    min_salience: float = Query(0.0, ge=0.0, le=1.0),
+):
+    """List all procedural memories."""
+    ctx = get_cortex()
+    procedures = ctx.list_procedures(agent_id=agent_id, min_salience=min_salience)
+    return {
+        "count": len(procedures),
+        "procedures": [
+            {
+                "id": node.id,
+                "content": node.content[:300],
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "concepts": node.metadata.concepts[:10],
+                "agent_id": node.metadata.agent_id,
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in procedures
+        ],
+    }
+
+
+@app.get("/procedures/match")
+async def match_procedures(
+    tags: Optional[str] = Query(None, description="Comma-separated tags"),
+    concepts: Optional[str] = Query(None, description="Comma-separated concepts"),
+):
+    """Find procedures matching given tags or concepts."""
+    ctx = get_cortex()
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    concept_list = [c.strip() for c in concepts.split(",")] if concepts else None
+    procedures = ctx.find_relevant_procedures(tags=tag_list, concepts=concept_list)
+    return {
+        "count": len(procedures),
+        "procedures": [
+            {
+                "id": node.id,
+                "content": node.content[:300],
+                "salience": round(node.metadata.salience, 3),
+                "tags": node.metadata.tags,
+                "concepts": node.metadata.concepts[:10],
+                "created_at": node.created_at.isoformat(),
+            }
+            for node in procedures
+        ],
+    }
+
+
+@app.post("/procedures/{procedure_id}/outcome")
+async def record_procedure_outcome(procedure_id: str, req: ProcedureOutcomeRequest):
+    """Record success or failure of a procedure execution."""
+    ctx = get_cortex()
+    success = ctx.record_procedure_outcome(procedure_id, req.success)
+    if not success:
+        raise HTTPException(404, f"Procedure not found: {procedure_id}")
+    return {
+        "procedure_id": procedure_id,
+        "outcome_recorded": True,
+        "success": req.success,
+    }
+
+
+# =============================================================================
+# Emotions (affective summary / amygdala)
+# =============================================================================
+
+@app.get("/emotions/summary")
+async def emotional_summary():
+    """Get breakdown of memories by emotional valence."""
+    ctx = get_cortex()
+    summary = ctx.get_emotional_summary()
+    return {
+        "total": sum(summary.values()),
+        "by_valence": summary,
+    }
+
+
+# =============================================================================
+# Memory CRUD (get / delete / update)
+# NOTE: Placed after /memory/health to avoid path parameter collision
+# =============================================================================
+
+@app.get("/memory/{memory_id}")
+async def get_memory(memory_id: str):
+    """Get a single memory by ID."""
+    ctx = get_cortex()
+    node = ctx.get_memory(memory_id)
+    if not node:
+        raise HTTPException(404, f"Memory not found: {memory_id}")
+    return {
+        "id": node.id,
+        "content": node.content,
+        "type": node.metadata.memory_type.value,
+        "layer": node.metadata.layer.value,
+        "salience": round(node.metadata.salience, 3),
+        "valence": node.metadata.valence.value if hasattr(node.metadata.valence, "value") else str(node.metadata.valence),
+        "arousal": round(node.metadata.arousal, 3),
+        "tags": node.metadata.tags,
+        "concepts": node.metadata.concepts,
+        "agent_id": node.metadata.agent_id,
+        "visibility": node.metadata.visibility.value if hasattr(node.metadata.visibility, "value") else str(node.metadata.visibility),
+        "created_at": node.created_at.isoformat(),
+        "access_count": node.strength.access_count,
+    }
+
+
+@app.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    """Delete a memory from all stores."""
+    ctx = get_cortex()
+    success = ctx.delete_memory(memory_id)
+    if not success:
+        raise HTTPException(404, f"Memory not found: {memory_id}")
+    return {"deleted": True, "id": memory_id}
+
+
+@app.patch("/memory/{memory_id}")
+async def update_memory(memory_id: str, req: UpdateMemoryRequest):
+    """Update a memory's content and/or metadata."""
+    ctx = get_cortex()
+    visibility = None
+    if req.visibility:
+        try:
+            visibility = Visibility(req.visibility)
+        except ValueError:
+            raise HTTPException(400, f"Invalid visibility: {req.visibility}")
+
+    updated = ctx.update_memory(
+        memory_id=memory_id,
+        content=req.content,
+        tags=req.tags,
+        salience=req.salience,
+        visibility=visibility,
+    )
+    if updated is None:
+        raise HTTPException(404, f"Memory not found: {memory_id}")
+    return {
+        "id": updated.id,
+        "content": updated.content,
+        "type": updated.metadata.memory_type.value,
+        "salience": round(updated.metadata.salience, 3),
+        "tags": updated.metadata.tags,
     }
 
 

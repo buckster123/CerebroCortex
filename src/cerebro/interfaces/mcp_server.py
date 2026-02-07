@@ -36,7 +36,7 @@ from typing import Any, Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, Resource, ResourceTemplate, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
 from cerebro.config import MCP_SERVER_NAME, MCP_SERVER_VERSION
 from cerebro.cortex import CerebroCortex
@@ -157,6 +157,48 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     # -----------------------------------------------------------------
+    # Memory CRUD
+    # -----------------------------------------------------------------
+    "get_memory": {
+        "description": "Get a single memory by ID with all metadata, strength state, and concepts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to retrieve"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+    "delete_memory": {
+        "description": "Delete a memory from the system (removes from graph store and vector store).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to delete"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+    "update_memory": {
+        "description": "Update a memory's content and/or metadata (tags, salience, visibility). Content changes trigger re-embedding.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to update"},
+                "content": {"type": "string", "description": "New content (triggers re-embedding)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "New tags (replaces existing)"},
+                "salience": {"type": "number", "description": "New salience 0-1"},
+                "visibility": {
+                    "type": "string",
+                    "enum": ["private", "shared", "thread"],
+                    "description": "New visibility scope",
+                },
+            },
+            "required": ["memory_id"],
+        },
+    },
+
+    # -----------------------------------------------------------------
     # Episodes
     # -----------------------------------------------------------------
     "episode_start": {
@@ -202,6 +244,75 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 },
             },
             "required": ["episode_id"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Episodes & Intentions (Phase B)
+    # -----------------------------------------------------------------
+    "list_episodes": {
+        "description": "List recent episodes with their title, step count, valence, and creation time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max episodes to return (default: 10)"},
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+            },
+            "required": [],
+        },
+    },
+    "get_episode": {
+        "description": "Get full details of an episode by ID, including all steps.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "episode_id": {"type": "string", "description": "Episode ID to retrieve"},
+            },
+            "required": ["episode_id"],
+        },
+    },
+    "get_episode_memories": {
+        "description": "Get all memories in an episode, ordered by position.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "episode_id": {"type": "string", "description": "Episode to get memories from"},
+            },
+            "required": ["episode_id"],
+        },
+    },
+    "store_intention": {
+        "description": "Store a TODO/intention as a prospective memory for future action.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The intention/TODO content"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "agent_id": {"type": "string", "description": "Agent storing this intention"},
+                "salience": {"type": "number", "description": "Importance 0-1 (default: 0.7)"},
+            },
+            "required": ["content"],
+        },
+    },
+    "list_intentions": {
+        "description": "List pending intentions/TODOs that have not been resolved.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+                "min_salience": {"type": "number", "description": "Minimum salience threshold (default: 0.3)"},
+            },
+            "required": [],
+        },
+    },
+    "resolve_intention": {
+        "description": "Mark an intention as done/resolved (lowers its salience).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID of the intention to resolve"},
+            },
+            "required": ["memory_id"],
         },
     },
 
@@ -308,6 +419,126 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     # -----------------------------------------------------------------
+    # Engine Capabilities (Phase D)
+    # -----------------------------------------------------------------
+    "find_path": {
+        "description": "Find the shortest path between two memories in the associative graph.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_id": {"type": "string", "description": "Starting memory ID"},
+                "target_id": {"type": "string", "description": "Target memory ID"},
+            },
+            "required": ["source_id", "target_id"],
+        },
+    },
+    "common_neighbors": {
+        "description": "Find memories that are connected to both memory A and memory B.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id_a": {"type": "string", "description": "First memory ID"},
+                "id_b": {"type": "string", "description": "Second memory ID"},
+            },
+            "required": ["id_a", "id_b"],
+        },
+    },
+    "create_schema": {
+        "description": "Create an abstract pattern/schema from source memories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The abstract pattern content"},
+                "source_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of source memories this schema is derived from"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "agent_id": {"type": "string", "description": "Agent creating this schema"},
+            },
+            "required": ["content", "source_ids"],
+        },
+    },
+    "list_schemas": {
+        "description": "List all schematic memories (abstract patterns).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+            },
+            "required": [],
+        },
+    },
+    "find_matching_schemas": {
+        "description": "Find schemas matching given tags or concepts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to match"},
+                "concepts": {"type": "array", "items": {"type": "string"}, "description": "Concepts to match"},
+            },
+            "required": [],
+        },
+    },
+    "get_schema_sources": {
+        "description": "Get the source memories that a schema was derived from.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "schema_id": {"type": "string", "description": "Schema memory ID"},
+            },
+            "required": ["schema_id"],
+        },
+    },
+    "store_procedure": {
+        "description": "Store a procedural memory (workflow, strategy, or how-to).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The procedure/workflow content"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "derived_from": {"type": "array", "items": {"type": "string"}, "description": "IDs of memories this procedure is derived from"},
+                "agent_id": {"type": "string", "description": "Agent storing this procedure"},
+            },
+            "required": ["content"],
+        },
+    },
+    "list_procedures": {
+        "description": "List procedural memories (workflows, strategies).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+                "min_salience": {"type": "number", "description": "Minimum salience threshold (default: 0.0)"},
+            },
+            "required": [],
+        },
+    },
+    "find_relevant_procedures": {
+        "description": "Find procedures matching given tags or concepts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to match"},
+                "concepts": {"type": "array", "items": {"type": "string"}, "description": "Concepts to match"},
+            },
+            "required": [],
+        },
+    },
+    "record_procedure_outcome": {
+        "description": "Record success or failure of a procedure execution.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "procedure_id": {"type": "string", "description": "Procedure memory ID"},
+                "success": {"type": "boolean", "description": "Whether the procedure succeeded"},
+            },
+            "required": ["procedure_id", "success"],
+        },
+    },
+    "emotional_summary": {
+        "description": "Get a breakdown of memories by emotional valence.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+
+    # -----------------------------------------------------------------
     # Backward-compatible Neo-Cortex aliases
     # -----------------------------------------------------------------
     "memory_store": {
@@ -379,6 +610,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return await _handle_associate(cortex, arguments)
 
         # =============================================================
+        # Memory CRUD
+        # =============================================================
+        elif name == "get_memory":
+            return await _handle_get_memory(cortex, arguments)
+
+        elif name == "delete_memory":
+            return await _handle_delete_memory(cortex, arguments)
+
+        elif name == "update_memory":
+            return await _handle_update_memory(cortex, arguments)
+
+        # =============================================================
         # Episodes
         # =============================================================
         elif name == "episode_start":
@@ -389,6 +632,27 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "episode_end":
             return await _handle_episode_end(cortex, arguments)
+
+        # =============================================================
+        # Episodes & Intentions (Phase B)
+        # =============================================================
+        elif name == "list_episodes":
+            return await _handle_list_episodes(cortex, arguments)
+
+        elif name == "get_episode":
+            return await _handle_get_episode(cortex, arguments)
+
+        elif name == "get_episode_memories":
+            return await _handle_get_episode_memories(cortex, arguments)
+
+        elif name == "store_intention":
+            return await _handle_store_intention(cortex, arguments)
+
+        elif name == "list_intentions":
+            return await _handle_list_intentions(cortex, arguments)
+
+        elif name == "resolve_intention":
+            return await _handle_resolve_intention(cortex, arguments)
 
         # =============================================================
         # Sessions
@@ -431,6 +695,42 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "dream_status":
             return await _handle_dream_status(cortex)
+
+        # =============================================================
+        # Engine Capabilities (Phase D)
+        # =============================================================
+        elif name == "find_path":
+            return await _handle_find_path(cortex, arguments)
+
+        elif name == "common_neighbors":
+            return await _handle_common_neighbors(cortex, arguments)
+
+        elif name == "create_schema":
+            return await _handle_create_schema(cortex, arguments)
+
+        elif name == "list_schemas":
+            return await _handle_list_schemas(cortex, arguments)
+
+        elif name == "find_matching_schemas":
+            return await _handle_find_matching_schemas(cortex, arguments)
+
+        elif name == "get_schema_sources":
+            return await _handle_get_schema_sources(cortex, arguments)
+
+        elif name == "store_procedure":
+            return await _handle_store_procedure(cortex, arguments)
+
+        elif name == "list_procedures":
+            return await _handle_list_procedures(cortex, arguments)
+
+        elif name == "find_relevant_procedures":
+            return await _handle_find_relevant_procedures(cortex, arguments)
+
+        elif name == "record_procedure_outcome":
+            return await _handle_record_procedure_outcome(cortex, arguments)
+
+        elif name == "emotional_summary":
+            return await _handle_emotional_summary(cortex, arguments)
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -545,6 +845,59 @@ async def _handle_associate(cortex: CerebroCortex, args: dict) -> list[TextConte
     )]
 
 
+async def _handle_get_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    node = cortex.get_memory(args["memory_id"])
+    if not node:
+        return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
+    return [TextContent(type="text", text=json.dumps({
+        "id": node.id,
+        "content": node.content,
+        "type": node.metadata.memory_type.value,
+        "layer": node.metadata.layer.value,
+        "salience": round(node.metadata.salience, 3),
+        "valence": node.metadata.valence.value if hasattr(node.metadata.valence, "value") else str(node.metadata.valence),
+        "arousal": round(node.metadata.arousal, 3),
+        "tags": node.metadata.tags,
+        "concepts": node.metadata.concepts,
+        "agent_id": node.metadata.agent_id,
+        "visibility": node.metadata.visibility.value if hasattr(node.metadata.visibility, "value") else str(node.metadata.visibility),
+        "created_at": node.created_at.isoformat(),
+        "access_count": node.strength.access_count,
+    }, indent=2))]
+
+
+async def _handle_delete_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    success = cortex.delete_memory(args["memory_id"])
+    if not success:
+        return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
+    return [TextContent(type="text", text=f"Deleted memory: {args['memory_id']}")]
+
+
+async def _handle_update_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    visibility = None
+    if "visibility" in args:
+        try:
+            visibility = Visibility(args["visibility"])
+        except ValueError:
+            pass
+
+    updated = cortex.update_memory(
+        memory_id=args["memory_id"],
+        content=args.get("content"),
+        tags=args.get("tags"),
+        salience=args.get("salience"),
+        visibility=visibility,
+    )
+    if updated is None:
+        return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
+    return [TextContent(type="text", text=(
+        f"Updated memory: {updated.id}\n"
+        f"Type: {updated.metadata.memory_type.value} | "
+        f"Salience: {updated.metadata.salience:.2f} | "
+        f"Tags: {', '.join(updated.metadata.tags)}"
+    ))]
+
+
 async def _handle_episode_start(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     episode = cortex.episode_start(
         title=args.get("title"),
@@ -592,6 +945,101 @@ async def _handle_episode_end(cortex: CerebroCortex, args: dict) -> list[TextCon
         type="text",
         text=f"Episode ended (ID: {episode.id}, steps: {len(episode.steps)})",
     )]
+
+
+async def _handle_list_episodes(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    limit = args.get("limit", 10)
+    agent_id = args.get("agent_id")
+    episodes = cortex.list_episodes(limit=limit, agent_id=agent_id)
+    if not episodes:
+        return [TextContent(type="text", text="No episodes found.")]
+
+    lines = [f"**{len(episodes)} Episodes:**\n"]
+    for ep in episodes:
+        title = ep.title or "(untitled)"
+        valence = ep.overall_valence.value if hasattr(ep.overall_valence, "value") else str(ep.overall_valence)
+        created = ep.created_at.strftime("%Y-%m-%d %H:%M") if ep.created_at else "?"
+        lines.append(
+            f"- {ep.id}: {title} | steps: {len(ep.steps)} | "
+            f"valence: {valence} | created: {created}"
+        )
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_get_episode(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    episode = cortex.get_episode(args["episode_id"])
+    if episode is None:
+        return [TextContent(type="text", text=f"Episode not found: {args['episode_id']}")]
+
+    data = {
+        "id": episode.id,
+        "title": episode.title,
+        "steps": [
+            {
+                "memory_id": s.memory_id,
+                "position": s.position,
+                "role": s.role,
+                "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+            }
+            for s in episode.steps
+        ],
+        "session_id": episode.session_id,
+        "agent_id": episode.agent_id,
+        "tags": episode.tags,
+        "started_at": episode.started_at.isoformat() if episode.started_at else None,
+        "ended_at": episode.ended_at.isoformat() if episode.ended_at else None,
+        "overall_valence": episode.overall_valence.value if hasattr(episode.overall_valence, "value") else str(episode.overall_valence),
+        "consolidated": episode.consolidated,
+        "created_at": episode.created_at.isoformat() if episode.created_at else None,
+    }
+    return [TextContent(type="text", text=json.dumps(data, indent=2))]
+
+
+async def _handle_get_episode_memories(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    memories = cortex.get_episode_memories(args["episode_id"])
+    if not memories:
+        return [TextContent(type="text", text=f"No memories found for episode: {args['episode_id']}")]
+
+    lines = [f"**{len(memories)} memories in episode {args['episode_id']}:**\n"]
+    for i, node in enumerate(memories, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. [{node.metadata.memory_type.value}] {node.id}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_store_intention(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    node = cortex.store_intention(
+        content=args["content"],
+        tags=args.get("tags"),
+        agent_id=args.get("agent_id", "CLAUDE"),
+        salience=args.get("salience", 0.7),
+    )
+    preview = node.content[:80] + "..." if len(node.content) > 80 else node.content
+    return [TextContent(
+        type="text",
+        text=f"Stored intention (ID: {node.id}) {preview}",
+    )]
+
+
+async def _handle_list_intentions(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    agent_id = args.get("agent_id")
+    min_salience = args.get("min_salience", 0.3)
+    intentions = cortex.list_intentions(agent_id=agent_id, min_salience=min_salience)
+    if not intentions:
+        return [TextContent(type="text", text="No pending intentions.")]
+
+    lines = [f"**{len(intentions)} Pending Intentions:**\n"]
+    for i, node in enumerate(intentions, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. (salience: {node.metadata.salience:.2f}) {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_resolve_intention(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    success = cortex.resolve_intention(args["memory_id"])
+    if not success:
+        return [TextContent(type="text", text=f"Intention not found: {args['memory_id']}")]
+    return [TextContent(type="text", text=f"Resolved intention: {args['memory_id']}")]
 
 
 async def _handle_session_save(cortex: CerebroCortex, args: dict) -> list[TextContent]:
@@ -833,6 +1281,328 @@ async def _handle_dream_status(cortex: CerebroCortex) -> list[TextContent]:
         type="text",
         text=json.dumps(report.to_dict(), indent=2),
     )]
+
+
+
+# =============================================================================
+# Engine Capabilities (Phase D) handlers
+# =============================================================================
+
+async def _handle_find_path(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    path = cortex.find_path(args["source_id"], args["target_id"])
+    if not path:
+        return [TextContent(type="text", text="No path found.")]
+    return [TextContent(type="text", text=f"Path: {' -> '.join(path)}")]
+
+
+async def _handle_common_neighbors(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    neighbor_ids = cortex.get_common_neighbors(args["id_a"], args["id_b"])
+    if not neighbor_ids:
+        return [TextContent(type="text", text="No common neighbors found.")]
+
+    lines = [f"**{len(neighbor_ids)} Common Neighbors:**\n"]
+    for nid in neighbor_ids:
+        node = cortex.get_memory(nid)
+        preview = node.content[:100] + "..." if node and len(node.content) > 100 else (node.content if node else "?")
+        lines.append(f"- {nid}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_create_schema(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    node = cortex.create_schema(
+        content=args["content"],
+        source_ids=args["source_ids"],
+        tags=args.get("tags"),
+        agent_id=args.get("agent_id", "CLAUDE"),
+    )
+    preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+    return [TextContent(
+        type="text",
+        text=f"Created schema (ID: {node.id})\n{preview}",
+    )]
+
+
+async def _handle_list_schemas(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    schemas = cortex.list_schemas(agent_id=args.get("agent_id"))
+    if not schemas:
+        return [TextContent(type="text", text="No schemas found.")]
+
+    lines = [f"**{len(schemas)} Schemas:**\n"]
+    for i, node in enumerate(schemas, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. {node.id}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_find_matching_schemas(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    schemas = cortex.find_matching_schemas(
+        tags=args.get("tags"),
+        concepts=args.get("concepts"),
+    )
+    if not schemas:
+        return [TextContent(type="text", text="No matching schemas found.")]
+
+    lines = [f"**{len(schemas)} Matching Schemas:**\n"]
+    for i, node in enumerate(schemas, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. {node.id}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_get_schema_sources(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    source_ids = cortex.get_schema_sources(args["schema_id"])
+    if not source_ids:
+        return [TextContent(type="text", text=f"No sources found for schema: {args['schema_id']}")]
+
+    lines = [f"**{len(source_ids)} Source Memories for {args['schema_id']}:**\n"]
+    for sid in source_ids:
+        node = cortex.get_memory(sid)
+        content = node.content[:120] + "..." if node and len(node.content) > 120 else (node.content if node else "?")
+        lines.append(f"- {sid}: {content}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_store_procedure(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    node = cortex.store_procedure(
+        content=args["content"],
+        tags=args.get("tags"),
+        derived_from=args.get("derived_from"),
+        agent_id=args.get("agent_id", "CLAUDE"),
+    )
+    preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+    return [TextContent(
+        type="text",
+        text=f"Stored procedure (ID: {node.id})\n{preview}",
+    )]
+
+
+async def _handle_list_procedures(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    procedures = cortex.list_procedures(
+        agent_id=args.get("agent_id"),
+        min_salience=args.get("min_salience", 0.0),
+    )
+    if not procedures:
+        return [TextContent(type="text", text="No procedures found.")]
+
+    lines = [f"**{len(procedures)} Procedures:**\n"]
+    for i, node in enumerate(procedures, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. (salience: {node.metadata.salience:.2f}) {node.id}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_find_relevant_procedures(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    procedures = cortex.find_relevant_procedures(
+        tags=args.get("tags"),
+        concepts=args.get("concepts"),
+    )
+    if not procedures:
+        return [TextContent(type="text", text="No matching procedures found.")]
+
+    lines = [f"**{len(procedures)} Matching Procedures:**\n"]
+    for i, node in enumerate(procedures, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(f"{i}. (salience: {node.metadata.salience:.2f}) {node.id}: {preview}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_record_procedure_outcome(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    success = cortex.record_procedure_outcome(args["procedure_id"], args["success"])
+    if not success:
+        return [TextContent(type="text", text=f"Procedure not found: {args['procedure_id']}")]
+    outcome = "success" if args["success"] else "failure"
+    return [TextContent(
+        type="text",
+        text=f"Recorded outcome for {args['procedure_id']}: {outcome}",
+    )]
+
+
+async def _handle_emotional_summary(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    summary = cortex.get_emotional_summary()
+    if not summary:
+        return [TextContent(type="text", text="No emotional data available.")]
+
+    lines = ["**Emotional Summary:**\n"]
+    for valence, count in sorted(summary.items(), key=lambda x: -x[1]):
+        lines.append(f"  {valence}: {count}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+# =============================================================================
+# MCP Resources
+# =============================================================================
+
+@server.list_resources()
+async def list_resources() -> list[Resource]:
+    return [
+        Resource(
+            uri="cerebro://stats",
+            name="System Statistics",
+            description="Current CerebroCortex system statistics",
+            mimeType="application/json",
+        ),
+    ]
+
+@server.list_resource_templates()
+async def list_resource_templates() -> list[ResourceTemplate]:
+    return [
+        ResourceTemplate(
+            uriTemplate="cerebro://memory/{memory_id}",
+            name="Memory by ID",
+            description="Get a specific memory with full metadata",
+            mimeType="application/json",
+        ),
+        ResourceTemplate(
+            uriTemplate="cerebro://episodes/recent",
+            name="Recent Episodes",
+            description="Get recent episodes",
+            mimeType="application/json",
+        ),
+    ]
+
+@server.read_resource()
+async def read_resource(uri) -> str:
+    cortex = get_cortex()
+    uri_str = str(uri)
+
+    if uri_str == "cerebro://stats":
+        stats = cortex.stats()
+        return json.dumps(stats, indent=2, default=str)
+
+    if uri_str.startswith("cerebro://memory/"):
+        memory_id = uri_str.replace("cerebro://memory/", "")
+        node = cortex.get_memory(memory_id)
+        if not node:
+            return json.dumps({"error": "not found"})
+        return json.dumps({
+            "id": node.id,
+            "content": node.content,
+            "type": node.metadata.memory_type.value,
+            "layer": node.metadata.layer.value,
+            "salience": round(node.metadata.salience, 3),
+            "tags": node.metadata.tags,
+            "concepts": node.metadata.concepts,
+            "created_at": node.created_at.isoformat(),
+        }, indent=2)
+
+    if uri_str.startswith("cerebro://episodes"):
+        episodes = cortex.list_episodes(limit=10)
+        return json.dumps({
+            "count": len(episodes),
+            "episodes": [
+                {
+                    "id": ep.id,
+                    "title": ep.title,
+                    "steps": len(ep.steps),
+                    "valence": ep.overall_valence.value if hasattr(ep.overall_valence, "value") else str(ep.overall_valence),
+                }
+                for ep in episodes
+            ],
+        }, indent=2)
+
+    return json.dumps({"error": "unknown resource"})
+
+
+# =============================================================================
+# MCP Prompts
+# =============================================================================
+
+@server.list_prompts()
+async def list_prompts() -> list[Prompt]:
+    return [
+        Prompt(
+            name="session_handoff",
+            description="Generate an end-of-session summary for continuity",
+            arguments=[
+                PromptArgument(name="session_highlights", description="Key things that happened", required=True),
+            ],
+        ),
+        Prompt(
+            name="memory_review",
+            description="Review and clean up memories matching a query",
+            arguments=[
+                PromptArgument(name="query", description="Search query to find memories", required=True),
+                PromptArgument(name="max_results", description="Max memories to review (default: 20)", required=False),
+            ],
+        ),
+        Prompt(
+            name="context_briefing",
+            description="Generate a briefing based on recent activity",
+            arguments=[
+                PromptArgument(name="focus_area", description="Topic or project to focus on", required=False),
+            ],
+        ),
+    ]
+
+@server.get_prompt()
+async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
+    cortex = get_cortex()
+    args = arguments or {}
+
+    if name == "session_handoff":
+        highlights = args.get("session_highlights", "")
+        intentions = cortex.list_intentions()
+        intentions_text = "\n".join(f"- {i.content}" for i in intentions[:5]) or "None"
+        return GetPromptResult(
+            description="End-of-session handoff",
+            messages=[PromptMessage(
+                role="user",
+                content=TextContent(type="text", text=(
+                    f"Create a session handoff note based on:\n\n{highlights}\n\n"
+                    f"Pending intentions:\n{intentions_text}\n\n"
+                    f"Use session_save to store a note with key_discoveries, "
+                    f"unfinished_business, and if_disoriented fields."
+                )),
+            )],
+        )
+
+    elif name == "memory_review":
+        query = args.get("query", "")
+        max_results = int(args.get("max_results", "20"))
+        results = cortex.recall(query=query, top_k=max_results)
+        memories_text = "\n\n".join(
+            f"ID: {n.id}\nType: {n.metadata.memory_type.value} | Salience: {n.metadata.salience:.2f}\n"
+            f"Content: {n.content[:300]}\nTags: {', '.join(n.metadata.tags)}"
+            for n, score in results
+        )
+        return GetPromptResult(
+            description=f"Review {len(results)} memories matching '{query}'",
+            messages=[PromptMessage(
+                role="user",
+                content=TextContent(type="text", text=(
+                    f"Review these {len(results)} memories and suggest:\n"
+                    f"1. Which to delete (low quality, outdated, duplicates)\n"
+                    f"2. Which salience to adjust\n"
+                    f"3. Which to link together\n\n{memories_text}\n\n"
+                    f"Use delete_memory, update_memory, and associate tools."
+                )),
+            )],
+        )
+
+    elif name == "context_briefing":
+        focus = args.get("focus_area", "")
+        query = focus or "recent work and progress"
+        results = cortex.recall(query=query, top_k=10)
+        intentions = cortex.list_intentions()
+        context_text = "\n".join(
+            f"- [{n.metadata.memory_type.value}] {n.content[:150]}"
+            for n, _ in results
+        )
+        intentions_text = "\n".join(f"- {i.content}" for i in intentions[:5]) or "None"
+        return GetPromptResult(
+            description=f"Context briefing{' on ' + focus if focus else ''}",
+            messages=[PromptMessage(
+                role="user",
+                content=TextContent(type="text", text=(
+                    f"Briefing on{' ' + focus if focus else ' recent activity'}:\n\n"
+                    f"Relevant memories:\n{context_text}\n\n"
+                    f"Pending intentions:\n{intentions_text}\n\n"
+                    f"Summarize the current state and suggest next steps."
+                )),
+            )],
+        )
+
+    raise ValueError(f"Unknown prompt: {name}")
 
 
 # =============================================================================

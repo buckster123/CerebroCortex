@@ -215,6 +215,7 @@ class GraphStore:
         allowed = {
             "layer", "valence", "arousal", "salience", "episode_id",
             "session_id", "tags_json", "concepts_json", "promoted_at",
+            "visibility",
         }
         updates = []
         values = []

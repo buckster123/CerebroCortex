@@ -213,6 +213,109 @@ def recall(query, results, memory_type, agent, min_salience, as_json):
 
 
 # =============================================================================
+# Get / Delete / Update memory
+# =============================================================================
+
+@cli.command("get")
+@click.argument("memory_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def get_memory(memory_id, as_json):
+    """Get a memory by ID."""
+    ctx = get_cortex()
+    node = ctx.get_memory(memory_id)
+    if not node:
+        click.echo(f"Memory not found: {memory_id}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out({
+            "id": node.id,
+            "content": node.content,
+            "type": node.metadata.memory_type.value,
+            "layer": node.metadata.layer.value,
+            "salience": round(node.metadata.salience, 3),
+            "tags": node.metadata.tags,
+            "concepts": node.metadata.concepts,
+            "agent_id": node.metadata.agent_id,
+            "created_at": node.created_at.isoformat(),
+        })
+        return
+
+    click.echo(f"ID: {node.id}")
+    click.echo(f"  Type:     {node.metadata.memory_type.value}")
+    click.echo(f"  Layer:    {node.metadata.layer.value}")
+    click.echo(f"  Salience: {node.metadata.salience:.2f}")
+    click.echo(f"  Tags:     {', '.join(node.metadata.tags) if node.metadata.tags else 'none'}")
+    click.echo(f"  Concepts: {', '.join(node.metadata.concepts[:5]) if node.metadata.concepts else 'none'}")
+    click.echo(f"  Agent:    {node.metadata.agent_id}")
+    click.echo(f"  Created:  {node.created_at.strftime('%Y-%m-%d %H:%M')}")
+    click.echo(f"\n{node.content}")
+
+
+@cli.command("delete")
+@click.argument("memory_id")
+@click.option("--force", is_flag=True, help="Skip confirmation")
+def delete_memory(memory_id, force):
+    """Delete a memory from all stores."""
+    ctx = get_cortex()
+
+    if not force:
+        node = ctx.get_memory(memory_id)
+        if not node:
+            click.echo(f"Memory not found: {memory_id}", err=True)
+            sys.exit(1)
+        click.echo(f"Content: {node.content[:100]}...")
+        if not click.confirm("Delete this memory?"):
+            return
+
+    success = ctx.delete_memory(memory_id)
+    if not success:
+        click.echo(f"Memory not found: {memory_id}", err=True)
+        sys.exit(1)
+    click.echo(f"Deleted: {memory_id}")
+
+
+@cli.command("update")
+@click.argument("memory_id")
+@click.option("--content", help="New content (triggers re-embedding)")
+@click.option("--tags", multiple=True, help="New tags (replaces existing, repeatable)")
+@click.option("--salience", type=float, help="New salience 0-1")
+@click.option("--visibility", type=click.Choice(["shared", "private", "thread"]))
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def update_memory(memory_id, content, tags, salience, visibility, as_json):
+    """Update a memory's content or metadata."""
+    ctx = get_cortex()
+
+    vis = Visibility(visibility) if visibility else None
+    tag_list = list(tags) if tags else None
+
+    updated = ctx.update_memory(
+        memory_id=memory_id,
+        content=content,
+        tags=tag_list,
+        salience=salience,
+        visibility=vis,
+    )
+
+    if updated is None:
+        click.echo(f"Memory not found: {memory_id}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out({
+            "id": updated.id,
+            "content": updated.content,
+            "type": updated.metadata.memory_type.value,
+            "salience": round(updated.metadata.salience, 3),
+            "tags": updated.metadata.tags,
+        })
+    else:
+        click.echo(f"Updated: {updated.id}")
+        click.echo(f"  Salience: {updated.metadata.salience:.2f}")
+        click.echo(f"  Tags:     {', '.join(updated.metadata.tags) if updated.metadata.tags else 'none'}")
+
+
+# =============================================================================
 # Associate
 # =============================================================================
 
@@ -298,6 +401,196 @@ def episode_end(episode_id, summary, valence):
         click.echo("Error: episode not found.", err=True)
         sys.exit(1)
     click.echo(f"Episode ended: {ep.id} ({len(ep.steps)} steps)")
+
+@episode.command("list")
+@click.option("--limit", default=10, help="Max episodes to show")
+@click.option("--agent", help="Filter by agent ID")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def episode_list(limit, agent, as_json):
+    """List recent episodes."""
+    ctx = get_cortex()
+    episodes = ctx.list_episodes(limit=limit, agent_id=agent)
+
+    if as_json:
+        _json_out({
+            "count": len(episodes),
+            "episodes": [
+                {
+                    "id": ep.id,
+                    "title": ep.title,
+                    "steps": len(ep.steps),
+                    "valence": ep.overall_valence.value,
+                    "started_at": ep.started_at.isoformat() if ep.started_at else None,
+                }
+                for ep in episodes
+            ],
+        })
+        return
+
+    if not episodes:
+        click.echo("No episodes found.")
+        return
+
+    click.echo(f"Found {len(episodes)} episodes:\n")
+    for i, ep in enumerate(episodes, 1):
+        title = ep.title or "(untitled)"
+        started = ep.started_at.strftime("%Y-%m-%d %H:%M") if ep.started_at else "n/a"
+        click.echo(f"  {i}. {title}")
+        click.echo(f"     id: {ep.id}  steps: {len(ep.steps)}  valence: {ep.overall_valence.value}  started: {started}")
+        click.echo()
+
+
+@episode.command("get")
+@click.argument("episode_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def episode_get(episode_id, as_json):
+    """Get an episode by ID with its steps."""
+    ctx = get_cortex()
+    ep = ctx.get_episode(episode_id)
+    if ep is None:
+        click.echo(f"Episode not found: {episode_id}", err=True)
+        sys.exit(1)
+
+    memories = ctx.get_episode_memories(episode_id)
+    mem_map = {m.id: m for m in memories}
+
+    if as_json:
+        _json_out({
+            "id": ep.id,
+            "title": ep.title,
+            "agent_id": ep.agent_id,
+            "session_id": ep.session_id,
+            "valence": ep.overall_valence.value,
+            "peak_arousal": ep.peak_arousal,
+            "consolidated": ep.consolidated,
+            "started_at": ep.started_at.isoformat() if ep.started_at else None,
+            "ended_at": ep.ended_at.isoformat() if ep.ended_at else None,
+            "steps": [
+                {
+                    "position": step.position,
+                    "memory_id": step.memory_id,
+                    "role": step.role,
+                    "content": mem_map[step.memory_id].content if step.memory_id in mem_map else None,
+                }
+                for step in ep.steps
+            ],
+        })
+        return
+
+    title = ep.title or "(untitled)"
+    click.echo(f"Episode: {title}")
+    click.echo(f"  ID:          {ep.id}")
+    click.echo(f"  Agent:       {ep.agent_id}")
+    click.echo(f"  Valence:     {ep.overall_valence.value}")
+    click.echo(f"  Arousal:     {ep.peak_arousal:.2f}")
+    click.echo(f"  Consolidated:{ep.consolidated}")
+    if ep.started_at:
+        click.echo(f"  Started:     {ep.started_at.strftime('%Y-%m-%d %H:%M')}")
+    if ep.ended_at:
+        click.echo(f"  Ended:       {ep.ended_at.strftime('%Y-%m-%d %H:%M')}")
+
+    click.echo(f"\nSteps ({len(ep.steps)}):")
+    for step in ep.steps:
+        mem = mem_map.get(step.memory_id)
+        if mem:
+            preview = mem.content[:100] + "..." if len(mem.content) > 100 else mem.content
+        else:
+            preview = "(memory not found)"
+        click.echo(f"  [{step.position}] ({step.role}) {preview}")
+        click.echo(f"      memory_id: {step.memory_id}")
+
+
+# =============================================================================
+# Intentions (prospective memory)
+# =============================================================================
+
+@cli.group()
+def intention():
+    """Intention (prospective memory) management commands."""
+    pass
+
+
+@intention.command("add")
+@click.argument("content")
+@click.option("--tags", multiple=True, help="Tags (repeatable)")
+@click.option("--salience", type=float, default=0.7, help="Importance 0-1")
+@click.option("--agent", default="CLAUDE", help="Agent ID")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def intention_add(content, tags, salience, agent, as_json):
+    """Store a new intention (future TODO / prospective memory)."""
+    ctx = get_cortex()
+    node = ctx.store_intention(
+        content=content,
+        tags=list(tags) if tags else None,
+        agent_id=agent,
+        salience=salience,
+    )
+
+    if as_json:
+        _json_out({
+            "id": node.id,
+            "content": node.content,
+            "salience": round(node.metadata.salience, 3),
+            "tags": node.metadata.tags,
+            "agent_id": node.metadata.agent_id,
+        })
+        return
+
+    preview = content[:80] + "..." if len(content) > 80 else content
+    click.echo(f"Intention stored: {node.id}")
+    click.echo(f"  {preview}")
+
+
+@intention.command("list")
+@click.option("--agent", help="Filter by agent ID")
+@click.option("--min-salience", type=float, default=0.3, help="Minimum salience")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def intention_list(agent, min_salience, as_json):
+    """List pending intentions."""
+    ctx = get_cortex()
+    intentions = ctx.list_intentions(agent_id=agent, min_salience=min_salience)
+
+    if as_json:
+        _json_out({
+            "count": len(intentions),
+            "intentions": [
+                {
+                    "id": node.id,
+                    "content": node.content,
+                    "salience": round(node.metadata.salience, 3),
+                    "tags": node.metadata.tags,
+                    "agent_id": node.metadata.agent_id,
+                    "created_at": node.created_at.isoformat(),
+                }
+                for node in intentions
+            ],
+        })
+        return
+
+    if not intentions:
+        click.echo("No pending intentions.")
+        return
+
+    click.echo(f"Pending intentions ({len(intentions)}):\n")
+    for i, node in enumerate(intentions, 1):
+        preview = node.content[:100] + "..." if len(node.content) > 100 else node.content
+        click.echo(f"  {i}. [sal={node.metadata.salience:.2f}] {preview}")
+        click.echo(f"     id: {node.id}")
+        click.echo()
+
+
+@intention.command("resolve")
+@click.argument("memory_id")
+def intention_resolve(memory_id):
+    """Mark an intention as resolved."""
+    ctx = get_cortex()
+    success = ctx.resolve_intention(memory_id)
+    if not success:
+        click.echo(f"Intention not found: {memory_id}", err=True)
+        sys.exit(1)
+    click.echo(f"Resolved: {memory_id}")
+
+
 
 
 # =============================================================================
@@ -612,6 +905,305 @@ def dream_status(as_json):
         click.echo(f"  Duration: {report.total_duration_seconds:.1f}s")
         click.echo(f"  Success:  {report.success}")
 
+
+
+# =============================================================================
+# Graph Exploration (Phase D)
+# =============================================================================
+
+@cli.group()
+def graph():
+    """Graph exploration commands."""
+    pass
+
+
+@graph.command("path")
+@click.argument("source_id")
+@click.argument("target_id")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def graph_path(source_id, target_id, as_json):
+    """Find path between two memories."""
+    ctx = get_cortex()
+    try:
+        result = ctx.find_path(source_id, target_id)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out(result)
+        return
+
+    if not result or not result.get("path"):
+        click.echo(f"No path found between {source_id} and {target_id}.")
+        return
+
+    path = result["path"]
+    click.echo(f"Path ({len(path)} hops):\n")
+    for i, node_id in enumerate(path):
+        prefix = "  -> " if i > 0 else "     "
+        click.echo(f"{prefix}{node_id}")
+
+
+@graph.command("common")
+@click.argument("id_a")
+@click.argument("id_b")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def graph_common(id_a, id_b, as_json):
+    """Find common neighbors of two memories."""
+    ctx = get_cortex()
+    try:
+        result = ctx.get_common_neighbors(id_a, id_b)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out(result)
+        return
+
+    neighbors = result if isinstance(result, list) else result.get("neighbors", [])
+    if not neighbors:
+        click.echo(f"No common neighbors between {id_a} and {id_b}.")
+        return
+
+    click.echo(f"Common neighbors ({len(neighbors)}):\n")
+    for n in neighbors:
+        if isinstance(n, dict):
+            click.echo(f"  {n.get('id', n)}")
+        else:
+            click.echo(f"  {n}")
+
+
+# =============================================================================
+# Schema (Phase D)
+# =============================================================================
+
+@cli.group()
+def schema():
+    """Schema management commands."""
+    pass
+
+
+@schema.command("create")
+@click.argument("content")
+@click.option("--source", "source_ids", multiple=True, required=True, help="Source memory ID (repeatable)")
+@click.option("--tags", multiple=True, help="Tags (repeatable)")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def schema_create(content, source_ids, tags, as_json):
+    """Create a schema from source memories."""
+    ctx = get_cortex()
+    try:
+        node = ctx.create_schema(
+            content=content,
+            source_ids=list(source_ids),
+            tags=list(tags) if tags else None,
+        )
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out({
+            "id": node.id,
+            "content": node.content,
+            "type": node.metadata.memory_type.value,
+            "salience": round(node.metadata.salience, 3),
+            "tags": node.metadata.tags,
+            "source_ids": list(source_ids),
+        })
+        return
+
+    click.echo(f"Schema created: {node.id}")
+    click.echo(f"  Content:  {content[:100]}{'...' if len(content) > 100 else ''}")
+    click.echo(f"  Sources:  {len(source_ids)}")
+    click.echo(f"  Salience: {node.metadata.salience:.2f}")
+    if node.metadata.tags:
+        click.echo(f"  Tags:     {', '.join(node.metadata.tags)}")
+
+
+@schema.command("list")
+@click.option("--agent", help="Filter by agent ID")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def schema_list(agent, as_json):
+    """List schemas."""
+    ctx = get_cortex()
+    schemas = ctx.list_schemas(agent_id=agent)
+
+    if as_json:
+        _json_out({
+            "count": len(schemas),
+            "schemas": [
+                {
+                    "id": node.id,
+                    "content": node.content,
+                    "salience": round(node.metadata.salience, 3),
+                    "tags": node.metadata.tags,
+                    "agent_id": node.metadata.agent_id,
+                    "created_at": node.created_at.isoformat(),
+                }
+                for node in schemas
+            ],
+        })
+        return
+
+    if not schemas:
+        click.echo("No schemas found.")
+        return
+
+    click.echo(f"Schemas ({len(schemas)}):\n")
+    for i, node in enumerate(schemas, 1):
+        preview = node.content[:100] + "..." if len(node.content) > 100 else node.content
+        click.echo(f"  {i}. [sal={node.metadata.salience:.2f}] {preview}")
+        if node.metadata.tags:
+            click.echo(f"     tags: {', '.join(node.metadata.tags)}")
+        click.echo(f"     id: {node.id}")
+        click.echo()
+
+
+# =============================================================================
+# Procedure (Phase D)
+# =============================================================================
+
+@cli.group()
+def procedure():
+    """Procedural memory management commands."""
+    pass
+
+
+@procedure.command("add")
+@click.argument("content")
+@click.option("--tags", multiple=True, help="Tags (repeatable)")
+@click.option("--derived-from", "derived_from", multiple=True, help="Source memory ID (repeatable)")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def procedure_add(content, tags, derived_from, as_json):
+    """Store a procedural memory."""
+    ctx = get_cortex()
+    try:
+        node = ctx.store_procedure(
+            content=content,
+            tags=list(tags) if tags else None,
+            derived_from=list(derived_from) if derived_from else None,
+        )
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out({
+            "id": node.id,
+            "content": node.content,
+            "type": node.metadata.memory_type.value,
+            "salience": round(node.metadata.salience, 3),
+            "tags": node.metadata.tags,
+            "derived_from": list(derived_from) if derived_from else [],
+        })
+        return
+
+    preview = content[:80] + "..." if len(content) > 80 else content
+    click.echo(f"Procedure stored: {node.id}")
+    click.echo(f"  {preview}")
+    if node.metadata.tags:
+        click.echo(f"  Tags: {', '.join(node.metadata.tags)}")
+
+
+@procedure.command("list")
+@click.option("--agent", help="Filter by agent ID")
+@click.option("--min-salience", type=float, default=0.0, help="Minimum salience")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def procedure_list(agent, min_salience, as_json):
+    """List procedural memories."""
+    ctx = get_cortex()
+    procedures = ctx.list_procedures(agent_id=agent, min_salience=min_salience)
+
+    if as_json:
+        _json_out({
+            "count": len(procedures),
+            "procedures": [
+                {
+                    "id": node.id,
+                    "content": node.content,
+                    "salience": round(node.metadata.salience, 3),
+                    "tags": node.metadata.tags,
+                    "agent_id": node.metadata.agent_id,
+                    "created_at": node.created_at.isoformat(),
+                }
+                for node in procedures
+            ],
+        })
+        return
+
+    if not procedures:
+        click.echo("No procedures found.")
+        return
+
+    click.echo(f"Procedures ({len(procedures)}):\n")
+    for i, node in enumerate(procedures, 1):
+        preview = node.content[:100] + "..." if len(node.content) > 100 else node.content
+        click.echo(f"  {i}. [sal={node.metadata.salience:.2f}] {preview}")
+        if node.metadata.tags:
+            click.echo(f"     tags: {', '.join(node.metadata.tags)}")
+        click.echo(f"     id: {node.id}")
+        click.echo()
+
+
+@procedure.command("outcome")
+@click.argument("procedure_id")
+@click.option("--success", "outcome", flag_value="success", help="Record successful outcome")
+@click.option("--failure", "outcome", flag_value="failure", help="Record failed outcome")
+def procedure_outcome(procedure_id, outcome):
+    """Record outcome for a procedural memory."""
+    if outcome is None:
+        click.echo("Error: must specify --success or --failure.", err=True)
+        sys.exit(1)
+
+    ctx = get_cortex()
+    success = outcome == "success"
+    try:
+        result = ctx.record_procedure_outcome(procedure_id, success=success)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Outcome recorded for {procedure_id}: {'success' if success else 'failure'}")
+
+
+# =============================================================================
+# Emotions (Phase D)
+# =============================================================================
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def emotions(as_json):
+    """Show emotional valence breakdown."""
+    ctx = get_cortex()
+    try:
+        summary = ctx.get_emotional_summary()
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        _json_out(summary)
+        return
+
+    click.echo("Emotional Valence Breakdown")
+    click.echo("=" * 40)
+    if isinstance(summary, dict):
+        for key, value in summary.items():
+            if isinstance(value, dict):
+                click.echo(f"\n  {key}:")
+                for k, v in value.items():
+                    if isinstance(v, float):
+                        click.echo(f"    {k:15s} {v:.3f}")
+                    else:
+                        click.echo(f"    {k:15s} {v}")
+            elif isinstance(value, float):
+                click.echo(f"  {key:15s} {value:.3f}")
+            else:
+                click.echo(f"  {key:15s} {value}")
+    else:
+        click.echo(f"  {summary}")
 
 # =============================================================================
 # Import
