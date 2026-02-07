@@ -55,18 +55,22 @@ Endpoints:
     GET  /emotions/summary       Emotional valence breakdown
 """
 
+import asyncio
 import json
 import logging
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+
+from cerebro.events import event_bus
 
 from cerebro.config import (
     API_HOST,
@@ -129,11 +133,75 @@ def get_cortex() -> CerebroCortex:
 @app.on_event("startup")
 async def startup_load_settings():
     """Load persisted settings overrides on server start."""
+    event_bus.set_loop(asyncio.get_running_loop())
     try:
         load_on_startup()
         logger.info("Settings loaded from disk")
     except Exception as e:
         logger.warning(f"Failed to load settings on startup: {e}")
+
+
+# =============================================================================
+# WebSocket
+# =============================================================================
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    """Real-time event stream for dashboard clients."""
+    await ws.accept()
+    event_bus.register(ws)
+    try:
+        # Send welcome event
+        await ws.send_text(json.dumps({
+            "type": "system:connected",
+            "ts": datetime.now().isoformat(),
+            "data": {"server_version": MCP_SERVER_VERSION},
+        }))
+        # Keep alive — just consume any client messages (pings, etc.)
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        event_bus.unregister(ws)
+
+
+# =============================================================================
+# Event helpers
+# =============================================================================
+
+def _emit_stats_refresh():
+    """Emit current node/link/episode counts."""
+    try:
+        ctx = get_cortex()
+        s = ctx.stats()
+        event_bus.emit("stats:refresh", {
+            "nodes": s["nodes"],
+            "links": s["links"],
+            "episodes": s["episodes"],
+        })
+    except Exception:
+        pass
+
+
+def _dream_phase_callback(phase_report, agent_id):
+    """Called by DreamEngine after each phase completes."""
+    event_bus.emit("dream:phase_complete", {
+        "agent_id": agent_id,
+        "phase": phase_report.phase.value,
+        "success": phase_report.success,
+        "metrics": {
+            "memories_processed": phase_report.memories_processed,
+            "links_created": phase_report.links_created,
+            "links_strengthened": phase_report.links_strengthened,
+            "memories_pruned": phase_report.memories_pruned,
+            "schemas_extracted": phase_report.schemas_extracted,
+            "procedures_extracted": phase_report.procedures_extracted,
+            "llm_calls": phase_report.llm_calls,
+            "duration_seconds": round(phase_report.duration_seconds, 2),
+            "notes": phase_report.notes,
+        },
+    })
 
 
 # =============================================================================
@@ -354,7 +422,7 @@ async def remember(req: RememberRequest):
     if node is None:
         return {"stored": False, "reason": "gated_out"}
 
-    return {
+    result = {
         "stored": True,
         "id": node.id,
         "type": node.metadata.memory_type.value,
@@ -364,6 +432,14 @@ async def remember(req: RememberRequest):
         "concepts": node.metadata.concepts[:10],
         "links": node.link_count,
     }
+    event_bus.emit("memory:stored", {
+        "id": node.id,
+        "type": node.metadata.memory_type.value,
+        "layer": node.metadata.layer.value,
+        "salience": round(node.metadata.salience, 3),
+    })
+    _emit_stats_refresh()
+    return result
 
 
 @app.post("/recall")
@@ -430,13 +506,20 @@ async def associate(req: AssociateRequest):
     if link_id is None:
         raise HTTPException(404, "One or both memory IDs not found")
 
-    return {
+    result = {
         "link_id": link_id,
         "source_id": req.source_id,
         "target_id": req.target_id,
         "link_type": req.link_type,
         "weight": req.weight,
     }
+    event_bus.emit("link:created", {
+        "source_id": req.source_id,
+        "target_id": req.target_id,
+        "link_type": req.link_type,
+    })
+    _emit_stats_refresh()
+    return result
 
 
 # =============================================================================
@@ -1171,6 +1254,8 @@ async def delete_memory(memory_id: str, agent_id: Optional[str] = None):
     success = ctx.delete_memory(memory_id, agent_id=agent_id)
     if not success:
         raise HTTPException(404, f"Memory not found: {memory_id}")
+    event_bus.emit("memory:deleted", {"id": memory_id})
+    _emit_stats_refresh()
     return {"deleted": True, "id": memory_id}
 
 
@@ -1195,13 +1280,19 @@ async def update_memory(memory_id: str, req: UpdateMemoryRequest, agent_id: Opti
     )
     if updated is None:
         raise HTTPException(404, f"Memory not found: {memory_id}")
-    return {
+    result = {
         "id": updated.id,
         "content": updated.content,
         "type": updated.metadata.memory_type.value,
         "salience": round(updated.metadata.salience, 3),
         "tags": updated.metadata.tags,
     }
+    event_bus.emit("memory:updated", {
+        "id": updated.id,
+        "type": updated.metadata.memory_type.value,
+        "salience": round(updated.metadata.salience, 3),
+    })
+    return result
 
 
 class ShareMemoryRequest(BaseModel):
@@ -1244,21 +1335,43 @@ def _get_dream_engine(ctx: CerebroCortex):
             llm = LLMClient()
         except Exception:
             llm = None
-        _dream_engine = DreamEngine(ctx, llm_client=llm)
+        _dream_engine = DreamEngine(
+            ctx, llm_client=llm,
+            on_phase_complete=_dream_phase_callback,
+        )
     return _dream_engine
+
+
+def _run_dream_in_thread(dream):
+    """Run dream cycle in a background thread, emitting events on completion."""
+    try:
+        event_bus.emit("dream:started", {})
+        reports = dream.run_all_agents_cycle()
+        event_bus.emit("dream:complete", {
+            "reports": [r.to_dict() for r in reports],
+        })
+        _emit_stats_refresh()
+    except Exception as e:
+        logger.error(f"Dream thread failed: {e}", exc_info=True)
+        event_bus.emit("dream:error", {"error": str(e)})
 
 
 @app.post("/dream/run")
 async def dream_run():
-    """Run a dream consolidation cycle."""
+    """Run a dream consolidation cycle (non-blocking)."""
     ctx = get_cortex()
     dream = _get_dream_engine(ctx)
 
     if dream.is_running:
         raise HTTPException(409, "Dream cycle already in progress")
 
-    reports = dream.run_all_agents_cycle()
-    return {"reports": [r.to_dict() for r in reports]}
+    threading.Thread(
+        target=_run_dream_in_thread,
+        args=(dream,),
+        daemon=True,
+    ).start()
+
+    return {"status": "started"}
 
 
 @app.get("/dream/status")

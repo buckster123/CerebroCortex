@@ -1123,6 +1123,60 @@ const ENGINES = [
 ];
 
 /* =================================================================
+   WEBSOCKET CLIENT
+   ================================================================= */
+class CortexWS {
+  constructor() {
+    this._handlers = {};
+    this._ws = null;
+    this._reconnectDelay = 1000;
+    this._maxDelay = 30000;
+  }
+
+  connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/ws`;
+    this._ws = new WebSocket(url);
+
+    this._ws.onopen = () => {
+      console.log('WS connected');
+      this._reconnectDelay = 1000;
+    };
+
+    this._ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        this.dispatch(msg);
+      } catch (err) {
+        console.warn('WS parse error:', err);
+      }
+    };
+
+    this._ws.onclose = () => {
+      console.log(`WS closed, reconnecting in ${this._reconnectDelay}ms`);
+      setTimeout(() => this.connect(), this._reconnectDelay);
+      this._reconnectDelay = Math.min(this._reconnectDelay * 2, this._maxDelay);
+    };
+
+    this._ws.onerror = () => {
+      // onclose will fire after this, triggering reconnect
+    };
+  }
+
+  on(eventType, fn) {
+    if (!this._handlers[eventType]) this._handlers[eventType] = [];
+    this._handlers[eventType].push(fn);
+  }
+
+  dispatch(msg) {
+    const fns = this._handlers[msg.type];
+    if (fns) fns.forEach(fn => fn(msg.data, msg));
+  }
+}
+
+const ws = new CortexWS();
+
+/* =================================================================
    API HELPERS
    ================================================================= */
 async function api(path, opts = {}) {
@@ -1644,17 +1698,20 @@ async function loadDreamStatus() {
 
 async function runDream() {
   const btn = document.getElementById('dream-run-btn');
-  btn.textContent = 'Dreaming...';
+  btn.textContent = 'Dreaming... 0/6';
   btn.disabled = true;
-  toast('Dream cycle initiated...');
 
+  // Reset phase pipeline icons
+  document.querySelectorAll('.dream-phase').forEach(p => {
+    p.classList.remove('ok', 'fail');
+  });
+
+  // Fire-and-forget — completion arrives via WebSocket
   const data = await api('/dream/run', { method: 'POST' });
-  btn.textContent = 'Initiate Dream Cycle';
-  btn.disabled = false;
-
-  if (data) {
-    toast('Dream cycle complete');
-    loadDreamStatus();
+  if (!data || data.status !== 'started') {
+    // Request itself failed (e.g. already running)
+    btn.textContent = 'Initiate Dream Cycle';
+    btn.disabled = false;
   }
 }
 
@@ -1928,6 +1985,80 @@ window.addEventListener('DOMContentLoaded', () => {
   // Load agents and dashboard
   loadAgents();
   loadDashboard();
+
+  // ---- WebSocket event handlers ----
+  let _dreamPhasesCompleted = 0;
+
+  ws.on('system:connected', (data) => {
+    toast('Live connection established');
+  });
+
+  ws.on('stats:refresh', (data) => {
+    document.getElementById('hdr-nodes').textContent = data.nodes ?? '-';
+    document.getElementById('hdr-links').textContent = data.links ?? '-';
+    document.getElementById('hdr-episodes').textContent = data.episodes ?? '-';
+  });
+
+  ws.on('memory:stored', (data) => {
+    toast(`Memory stored: ${data.type}`);
+    const active = document.querySelector('.panel.active');
+    if (active && active.id === 'panel-cortex') loadDashboard();
+  });
+
+  ws.on('memory:deleted', (data) => {
+    toast('Memory deleted');
+    const active = document.querySelector('.panel.active');
+    if (active && active.id === 'panel-cortex') loadDashboard();
+  });
+
+  ws.on('memory:updated', () => {
+    // Silent — stats already refreshed
+  });
+
+  ws.on('link:created', () => {
+    const active = document.querySelector('.panel.active');
+    if (active && active.id === 'panel-graph') loadGraph();
+  });
+
+  ws.on('dream:started', () => {
+    _dreamPhasesCompleted = 0;
+    document.querySelectorAll('.dream-phase').forEach(p => {
+      p.classList.remove('ok', 'fail');
+    });
+    const btn = document.getElementById('dream-run-btn');
+    btn.textContent = 'Dreaming... 0/6';
+    btn.disabled = true;
+    toast('Dream cycle started');
+  });
+
+  ws.on('dream:phase_complete', (data) => {
+    _dreamPhasesCompleted++;
+    const phases = document.querySelectorAll('.dream-phase');
+    const idx = _dreamPhasesCompleted - 1;
+    if (phases[idx]) {
+      phases[idx].classList.add(data.success ? 'ok' : 'fail');
+    }
+    const btn = document.getElementById('dream-run-btn');
+    btn.textContent = `Dreaming... ${_dreamPhasesCompleted}/6`;
+  });
+
+  ws.on('dream:complete', () => {
+    const btn = document.getElementById('dream-run-btn');
+    btn.textContent = 'Initiate Dream Cycle';
+    btn.disabled = false;
+    toast('Dream cycle complete');
+    loadDreamStatus();
+  });
+
+  ws.on('dream:error', (data) => {
+    const btn = document.getElementById('dream-run-btn');
+    btn.textContent = 'Initiate Dream Cycle';
+    btn.disabled = false;
+    toast(`Dream error: ${data.error || 'unknown'}`, true);
+  });
+
+  // Connect WebSocket
+  ws.connect();
 });
 </script>
 </body>

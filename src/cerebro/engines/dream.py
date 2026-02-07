@@ -24,7 +24,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from cerebro.config import (
     DREAM_CLUSTER_MIN_SIZE,
@@ -164,15 +164,18 @@ Return ONLY valid JSON object."""
 class DreamEngine:
     """The Default Mode Network. Consolidates memories through 6 dream phases."""
 
-    def __init__(self, cortex, llm_client=None):
+    def __init__(self, cortex, llm_client=None,
+                 on_phase_complete: Optional[Callable[[PhaseReport, str | None], None]] = None):
         """Initialize Dream Engine.
 
         Args:
             cortex: CerebroCortex instance (must be initialized)
             llm_client: LLMClient instance (optional, LLM phases skipped if None)
+            on_phase_complete: Callback(phase_report, agent_id) called after each phase
         """
         self._cortex = cortex
         self._llm = llm_client
+        self._on_phase_complete = on_phase_complete
         self._llm_calls_remaining = DREAM_MAX_LLM_CALLS
         self._running = False
         self._agent_id: Optional[str] = None
@@ -222,21 +225,27 @@ class DreamEngine:
 
             # Phase 1: SWS Replay (algorithmic)
             report.phases.append(self._phase_sws_replay())
+            self._notify_phase(report.phases[-1])
 
             # Phase 2: Pattern Extraction (LLM-assisted)
             report.phases.append(self._phase_pattern_extraction())
+            self._notify_phase(report.phases[-1])
 
             # Phase 3: Schema Formation (LLM-assisted)
             report.phases.append(self._phase_schema_formation())
+            self._notify_phase(report.phases[-1])
 
             # Phase 4: Emotional Reprocessing (algorithmic)
             report.phases.append(self._phase_emotional_reprocessing())
+            self._notify_phase(report.phases[-1])
 
             # Phase 5: Pruning (algorithmic)
             report.phases.append(self._phase_pruning())
+            self._notify_phase(report.phases[-1])
 
             # Phase 6: REM Recombination (LLM-assisted)
             report.phases.append(self._phase_rem_recombination())
+            self._notify_phase(report.phases[-1])
 
             # Mark episodes consolidated
             episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
@@ -291,6 +300,14 @@ class DreamEngine:
             reports.append(self.run_cycle(agent_id=aid))
         self._last_reports = reports
         return reports
+
+    def _notify_phase(self, phase_report: PhaseReport) -> None:
+        """Invoke the on_phase_complete callback if registered."""
+        if self._on_phase_complete:
+            try:
+                self._on_phase_complete(phase_report, self._agent_id)
+            except Exception as e:
+                logger.warning(f"Phase callback error: {e}")
 
     # =========================================================================
     # Phase 1: SWS Replay
