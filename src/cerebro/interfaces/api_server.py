@@ -77,6 +77,7 @@ from cerebro.config import (
     API_PORT,
     MCP_SERVER_NAME,
     MCP_SERVER_VERSION,
+    WEB_DIR,
 )
 from cerebro.cortex import CerebroCortex
 from cerebro.models.agent import AgentProfile
@@ -117,8 +118,6 @@ app.add_middleware(
 # Singleton cortex instance
 _cortex: Optional[CerebroCortex] = None
 _dream_engine = None
-
-WEB_DIR = Path(__file__).parent.parent.parent.parent / "web"
 
 
 def get_cortex() -> CerebroCortex:
@@ -1458,6 +1457,8 @@ async def reset_all_settings():
 
 def main():
     import uvicorn
+    from cerebro._init_dirs import ensure_data_dirs
+    ensure_data_dirs()
     logger.info(f"Starting CerebroCortex API on {API_HOST}:{API_PORT}...")
     uvicorn.run(
         "cerebro.interfaces.api_server:app",

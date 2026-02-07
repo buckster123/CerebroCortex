@@ -1331,6 +1331,8 @@ def import_markdown(file, as_json):
 # =============================================================================
 
 def main():
+    from cerebro._init_dirs import ensure_data_dirs
+    ensure_data_dirs()
     cli()
 
 

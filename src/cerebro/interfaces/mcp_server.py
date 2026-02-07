@@ -1746,5 +1746,12 @@ async def main():
         )
 
 
+def main_sync():
+    """Synchronous entry point for console_scripts."""
+    from cerebro._init_dirs import ensure_data_dirs
+    ensure_data_dirs()
+    asyncio.run(main())
+
+
 if __name__ == "__main__":
     asyncio.run(main())

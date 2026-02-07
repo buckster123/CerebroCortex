@@ -4,15 +4,31 @@ import os
 from pathlib import Path
 from cerebro.types import LinkType
 
+
 # =============================================================================
 # Paths
 # =============================================================================
-CEREBRO_ROOT = Path(__file__).parent.parent.parent  # project root
-DATA_DIR = CEREBRO_ROOT / "data"
+def _resolve_data_dir() -> Path:
+    """Resolve data directory: CEREBRO_DATA_DIR env var, or ~/.cerebro-cortex/"""
+    env_dir = os.environ.get("CEREBRO_DATA_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / ".cerebro-cortex"
+
+
+def _resolve_web_dir() -> Path:
+    """Find web dashboard: package data first, then CWD fallback."""
+    pkg_web = Path(__file__).parent / "web"  # src/cerebro/web/ (installed)
+    if pkg_web.is_dir():
+        return pkg_web
+    return Path.cwd() / "web"  # fallback for weird layouts
+
+
+DATA_DIR = _resolve_data_dir()
 CHROMA_DIR = DATA_DIR / "chroma"
 SQLITE_DB = DATA_DIR / "cerebro.db"
 EXPORT_DIR = DATA_DIR / "exports"
-KB_ROOT = CEREBRO_ROOT / "raw_data"
+WEB_DIR = _resolve_web_dir()
 
 # =============================================================================
 # Embedding
@@ -139,7 +155,10 @@ OPENAI_COMPAT_NO_THINK = True  # Append /no_think to system prompts (disables Co
 # Server
 # =============================================================================
 MCP_SERVER_NAME = "cerebro-cortex"
-MCP_SERVER_VERSION = "0.1.0"
+try:
+    from cerebro import __version__ as MCP_SERVER_VERSION
+except ImportError:
+    MCP_SERVER_VERSION = "0.1.0"
 API_HOST = "0.0.0.0"
 API_PORT = 8767
 

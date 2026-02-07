@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="${SCRIPT_DIR}/venv/bin/python"
+export CEREBRO_DATA_DIR="${CEREBRO_DATA_DIR:-${SCRIPT_DIR}/data}"
 
 # Use venv if available, fall back to system python
 if [ -x "$VENV_PYTHON" ]; then

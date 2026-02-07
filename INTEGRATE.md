@@ -4,11 +4,56 @@ CerebroCortex (CC) is a drop-in memory upgrade for AI agents. It adds decay/prom
 
 CC's MCP server speaks standard MCP over stdio JSON-RPC 2.0. The `openclaw-mcp-adapter` plugin connects to it directly with zero protocol changes.
 
+## Installation
+
+### Option A: pip install (recommended)
+
+```bash
+pip install 'cerebro-cortex[all]'
+```
+
+This gives you three commands: `cerebro`, `cerebro-mcp`, `cerebro-api`.
+
+Data is stored in `~/.cerebro-cortex/` by default. Override with:
+```bash
+export CEREBRO_DATA_DIR=/your/custom/path
+```
+
+Install subsets if you don't need everything:
+```bash
+pip install 'cerebro-cortex[mcp]'       # MCP server only
+pip install 'cerebro-cortex[mcp,llm]'   # MCP + Dream Engine LLM support
+pip install 'cerebro-cortex[api]'       # REST API + dashboard
+```
+
+### Option B: Clone + venv (development)
+
+```bash
+git clone https://github.com/buckster123/CerebroCortex.git
+cd CerebroCortex
+python3 -m venv venv
+source venv/bin/activate
+pip install -e '.[all,dev]'
+```
+
+The dev bash scripts (`./cerebro-mcp`, `./cerebro-api`, `./cerebro`) automatically set `CEREBRO_DATA_DIR` to `./data/` relative to the project root.
+
 ## Quick Start
 
 ### 1. Add to your MCP config
 
-**Claude Code** (`~/.claude.json`):
+**Claude Code** (`~/.claude.json`) — pip install:
+```json
+{
+  "mcpServers": {
+    "cerebro-cortex": {
+      "command": "cerebro-mcp"
+    }
+  }
+}
+```
+
+**Claude Code** (`~/.claude.json`) — clone method:
 ```json
 {
   "mcpServers": {
@@ -23,7 +68,7 @@ CC's MCP server speaks standard MCP over stdio JSON-RPC 2.0. The `openclaw-mcp-a
 ```json
 {
   "cerebro-cortex": {
-    "command": "/path/to/CerebroCore/cerebro-mcp",
+    "command": "cerebro-mcp",
     "description": "Long-term memory with search, decay, and consolidation"
   }
 }
@@ -77,11 +122,21 @@ export CEREBRO_AGENT_ID="my-agent"
 }
 ```
 
+### Data Directory
+
+By default, data is stored in `~/.cerebro-cortex/`. Override with:
+
+```bash
+export CEREBRO_DATA_DIR=/path/to/data
+```
+
+The dev bash scripts (`./cerebro-mcp`, etc.) automatically default to `./data/` relative to the project root.
+
 ### API Keys
 
 For the Dream Engine (offline memory maintenance), you need an LLM. Options:
 
-1. **Local LLM** (default): Configure `data/settings.json`:
+1. **Local LLM** (default): Configure `settings.json` in your data directory:
    ```json
    {
      "llm": {
@@ -92,7 +147,7 @@ For the Dream Engine (offline memory maintenance), you need an LLM. Options:
    }
    ```
 
-2. **Claude API**: Add your key to `data/.env`:
+2. **Claude API**: Add your key to `.env` in your data directory:
    ```
    ANTHROPIC_API_KEY="sk-ant-..."
    ```
@@ -101,8 +156,8 @@ For the Dream Engine (offline memory maintenance), you need an LLM. Options:
 
 Settings can be changed without restarting the server. The priority order is:
 1. `config.py` defaults (lowest)
-2. `data/settings.json` overrides
-3. `data/.env` for API keys (highest)
+2. `settings.json` overrides (in data directory)
+3. `.env` for API keys (in data directory, highest)
 
 ## Tool Reference
 

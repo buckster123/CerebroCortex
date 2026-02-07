@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CEREBRO_DATA_DIR="${CEREBRO_DATA_DIR:-${SCRIPT_DIR}/data}"
 export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
 
 exec python3 -m cerebro.interfaces.cli "$@"

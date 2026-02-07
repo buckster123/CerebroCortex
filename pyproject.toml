@@ -4,13 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerebro-cortex"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Brain-analogous AI memory system with associative networks, ACT-R/FSRS activation, and dream consolidation"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "CerebroCore Team"},
+]
+keywords = ["memory", "ai", "mcp", "associative-network", "act-r", "fsrs", "dream-engine"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
@@ -24,20 +35,35 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=0.1.0"]
-api = ["fastapi>=0.100.0", "uvicorn>=0.22.0"]
+api = ["fastapi>=0.100.0", "uvicorn>=0.22.0", "websockets>=11.0"]
 llm = ["anthropic>=0.25.0", "openai>=1.0.0"]
 all = ["cerebro-cortex[mcp,api,llm]"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
 ]
 
 [project.scripts]
 cerebro = "cerebro.interfaces.cli:main"
+cerebro-mcp = "cerebro.interfaces.mcp_server:main_sync"
+cerebro-api = "cerebro.interfaces.api_server:main"
+
+[project.urls]
+Homepage = "https://github.com/buckster123/CerebroCortex"
+Repository = "https://github.com/buckster123/CerebroCortex"
+Issues = "https://github.com/buckster123/CerebroCortex/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "cerebro.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cerebro = ["web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
