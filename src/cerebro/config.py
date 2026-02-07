@@ -1,5 +1,6 @@
 """Configuration constants for CerebroCortex."""
 
+import os
 from pathlib import Path
 from cerebro.types import LinkType
 
@@ -123,7 +124,7 @@ DREAM_REM_MIN_CONNECTION_STRENGTH = 0.4
 
 # LLM configuration
 LLM_PRIMARY_PROVIDER = "openai_compat"  # "anthropic", "ollama", "openai_compat"
-LLM_PRIMARY_MODEL = "qwen/qwen3-8b"
+LLM_PRIMARY_MODEL = "qwen/qwen3-4b-2507"
 LLM_FALLBACK_PROVIDER = "anthropic"  # Claude API fallback
 LLM_FALLBACK_MODEL = "claude-sonnet-4-5-20250929"
 LLM_TEMPERATURE = 0.7
@@ -145,7 +146,7 @@ API_PORT = 8767
 # =============================================================================
 # Agent defaults
 # =============================================================================
-DEFAULT_AGENT_ID = "CLAUDE"
+DEFAULT_AGENT_ID = os.environ.get("CEREBRO_AGENT_ID", "CLAUDE")
 AGENT_PROFILES = {
     "CLAUDE": {
         "display_name": "Claude",

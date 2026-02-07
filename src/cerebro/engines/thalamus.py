@@ -16,7 +16,7 @@ from typing import Optional
 
 from cerebro.activation.decay import compute_current_retrievability
 from cerebro.activation.strength import record_access
-from cerebro.config import LAYER_CONFIG
+from cerebro.config import DEFAULT_AGENT_ID, LAYER_CONFIG
 from cerebro.models.memory import MemoryMetadata, MemoryNode, StrengthState
 from cerebro.storage.graph_store import GraphStore
 from cerebro.types import MemoryLayer, MemoryType, Visibility
@@ -45,7 +45,7 @@ class GatingEngine:
         memory_type: Optional[MemoryType] = None,
         tags: Optional[list[str]] = None,
         salience: Optional[float] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
         session_id: Optional[str] = None,
         visibility: Visibility = Visibility.SHARED,
     ) -> Optional[MemoryNode]:

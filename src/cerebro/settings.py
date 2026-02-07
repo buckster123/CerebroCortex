@@ -57,6 +57,8 @@ _SETTING_MAP: dict[str, str] = {
     "advanced.spreading_decay_per_hop": "SPREADING_DECAY_PER_HOP",
     "advanced.fsrs_initial_stability": "FSRS_INITIAL_STABILITY",
     "advanced.fsrs_initial_difficulty": "FSRS_INITIAL_DIFFICULTY",
+    # Agent
+    "agent.default_agent_id": "DEFAULT_AGENT_ID",
 }
 
 # Env-file key → config.py attribute (only for secrets)

@@ -38,7 +38,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent, Resource, ResourceTemplate, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
-from cerebro.config import MCP_SERVER_NAME, MCP_SERVER_VERSION
+from cerebro.config import DEFAULT_AGENT_ID, MCP_SERVER_NAME, MCP_SERVER_VERSION
 from cerebro.cortex import CerebroCortex
 from cerebro.models.agent import AgentProfile
 from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
@@ -86,7 +86,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # Core: remember, recall, associate
     # -----------------------------------------------------------------
     "remember": {
-        "description": "Store a memory in CerebroCortex. The memory goes through gating (dedup/noise filter), emotional analysis, concept extraction, and auto-linking.",
+        "description": "Save information to long-term memory. Automatically detects duplicates, categorizes the content, and connects it to related memories. Use this to store facts, decisions, or anything worth remembering.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -103,19 +103,19 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "visibility": {
                     "type": "string",
                     "enum": ["private", "shared", "thread"],
-                    "description": "Sharing scope",
+                    "description": "Who can see this: 'private' (only you), 'shared' (all agents), 'thread' (same conversation)",
                 },
                 "context_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "IDs of memories active in current context (for auto-linking)",
+                    "description": "IDs of related memories to link to",
                 },
             },
             "required": ["content"],
         },
     },
     "recall": {
-        "description": "Search and retrieve memories using spreading activation + ACT-R/FSRS scoring. Provides richer results than simple vector search.",
+        "description": "Search your memories by meaning, not just keywords. Returns the most relevant memories ranked by relevance, importance, and recency.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -127,19 +127,19 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "description": "Filter by memory type",
                 },
                 "agent_id": {"type": "string", "description": "Filter by agent"},
-                "min_salience": {"type": "number", "description": "Minimum salience threshold"},
+                "min_salience": {"type": "number", "description": "Minimum importance threshold"},
                 "context_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Seed memory IDs for spreading activation",
+                    "description": "IDs of related memories to boost in results",
                 },
-                "conversation_thread": {"type": "string", "description": "Thread ID for THREAD-visibility matching"},
+                "conversation_thread": {"type": "string", "description": "Thread ID for scoping results to a conversation"},
             },
             "required": ["query"],
         },
     },
     "associate": {
-        "description": "Create a typed associative link between two memories.",
+        "description": "Create a link between two memories. Links improve search: when one memory is found, linked memories are boosted in results. Link types: temporal, causal, semantic, affective, contextual, contradicts, supports, derived_from, part_of.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -161,7 +161,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # Memory CRUD
     # -----------------------------------------------------------------
     "get_memory": {
-        "description": "Get a single memory by ID with all metadata, strength state, and concepts.",
+        "description": "Get a single memory by ID with all its metadata, tags, and concepts.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -172,7 +172,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "delete_memory": {
-        "description": "Delete a memory from the system (removes from graph store and vector store).",
+        "description": "Permanently delete a memory. Removes it from both search and the link graph.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -183,18 +183,18 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "update_memory": {
-        "description": "Update a memory's content and/or metadata (tags, salience, visibility). Content changes trigger re-embedding.",
+        "description": "Update a memory's content, tags, importance, or visibility. Changing content will update its search index automatically.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string", "description": "Memory ID to update"},
-                "content": {"type": "string", "description": "New content (triggers re-embedding)"},
+                "content": {"type": "string", "description": "New content (updates search index)"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "New tags (replaces existing)"},
-                "salience": {"type": "number", "description": "New salience 0-1"},
+                "salience": {"type": "number", "description": "New importance 0-1"},
                 "visibility": {
                     "type": "string",
                     "enum": ["private", "shared", "thread"],
-                    "description": "New visibility scope",
+                    "description": "Who can see this: 'private' (only you), 'shared' (all agents), 'thread' (same conversation)",
                 },
                 "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
@@ -203,7 +203,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     "share_memory": {
-        "description": "Change a memory's visibility (e.g., share a private memory). Only the owner can change visibility.",
+        "description": "Change who can see a memory. Options: 'private' (only the owner), 'shared' (all agents), 'thread' (agents in the same conversation). Only the memory owner can change this.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -211,7 +211,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "visibility": {
                     "type": "string",
                     "enum": ["private", "shared", "thread"],
-                    "description": "New visibility scope",
+                    "description": "New visibility level",
                 },
                 "agent_id": {"type": "string", "description": "Requesting agent (must be owner)"},
             },
@@ -223,7 +223,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # Episodes
     # -----------------------------------------------------------------
     "episode_start": {
-        "description": "Begin recording a new episode (temporal sequence of events).",
+        "description": "Start recording a sequence of related events as an episode. Memories added as steps will be linked in order.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -236,7 +236,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "episode_add_step": {
-        "description": "Add a memory as a step in the current episode. Creates temporal links between sequential steps.",
+        "description": "Add a memory as the next step in an episode. Steps are linked in sequence automatically.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -245,14 +245,14 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "role": {
                     "type": "string",
                     "enum": ["event", "context", "outcome", "reflection"],
-                    "description": "Role of this step",
+                    "description": "Role of this step in the episode",
                 },
             },
             "required": ["episode_id", "memory_id"],
         },
     },
     "episode_end": {
-        "description": "End an episode, setting its summary and emotional valence.",
+        "description": "Finish recording an episode. Optionally add a summary and overall tone.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -269,10 +269,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     # -----------------------------------------------------------------
-    # Episodes & Intentions (Phase B)
+    # Episodes & Intentions
     # -----------------------------------------------------------------
     "list_episodes": {
-        "description": "List recent episodes with their title, step count, valence, and creation time.",
+        "description": "List recent episodes with their title, step count, tone, and creation time.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -283,33 +283,33 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "get_episode": {
-        "description": "Get full details of an episode by ID, including all steps.",
+        "description": "Get full details of an episode including all its steps.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "episode_id": {"type": "string", "description": "Episode ID to retrieve"},
-                "agent_id": {"type": "string", "description": "Requesting agent (scope check)"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
             "required": ["episode_id"],
         },
     },
     "get_episode_memories": {
-        "description": "Get all memories in an episode, ordered by position.",
+        "description": "Get all memories in an episode, in order.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "episode_id": {"type": "string", "description": "Episode to get memories from"},
-                "agent_id": {"type": "string", "description": "Requesting agent (scope check)"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
             "required": ["episode_id"],
         },
     },
     "store_intention": {
-        "description": "Store a TODO/intention as a prospective memory for future action.",
+        "description": "Save a TODO or reminder for future action. The system will surface it when relevant.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "The intention/TODO content"},
+                "content": {"type": "string", "description": "The TODO or reminder content"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "agent_id": {"type": "string", "description": "Agent storing this intention"},
                 "salience": {"type": "number", "description": "Importance 0-1 (default: 0.7)"},
@@ -318,18 +318,18 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "list_intentions": {
-        "description": "List pending intentions/TODOs that have not been resolved.",
+        "description": "List pending TODOs and reminders that have not been resolved.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "agent_id": {"type": "string", "description": "Filter by agent"},
-                "min_salience": {"type": "number", "description": "Minimum salience threshold (default: 0.3)"},
+                "min_salience": {"type": "number", "description": "Minimum importance threshold (default: 0.3)"},
             },
             "required": [],
         },
     },
     "resolve_intention": {
-        "description": "Mark an intention as done/resolved (lowers its salience).",
+        "description": "Mark a TODO or reminder as done.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -340,17 +340,17 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     # -----------------------------------------------------------------
-    # Sessions (backward-compatible with Neo-Cortex)
+    # Sessions
     # -----------------------------------------------------------------
     "session_save": {
-        "description": "Save a session note for future instances. Use at session end for continuity.",
+        "description": "Save a summary of the current session so your future self can pick up where you left off. Include key discoveries, unfinished tasks, and orientation notes.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "session_summary": {"type": "string", "description": "What happened this session"},
                 "key_discoveries": {"type": "array", "items": {"type": "string"}, "description": "Important findings"},
                 "unfinished_business": {"type": "array", "items": {"type": "string"}, "description": "Tasks to continue"},
-                "if_disoriented": {"type": "array", "items": {"type": "string"}, "description": "Orientation instructions"},
+                "if_disoriented": {"type": "array", "items": {"type": "string"}, "description": "Orientation instructions for future sessions"},
                 "priority": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
                 "session_type": {"type": "string", "enum": ["orientation", "technical", "emotional", "task"]},
             },
@@ -358,7 +358,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "session_recall": {
-        "description": "Retrieve session notes from previous instances.",
+        "description": "Retrieve notes from previous sessions for orientation. Useful at the start of a new session to remember where you left off.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -375,7 +375,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # Agents
     # -----------------------------------------------------------------
     "register_agent": {
-        "description": "Register a new agent in the memory system.",
+        "description": "Register a new agent in the memory system. Each agent gets its own memory space with configurable sharing.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -392,7 +392,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "list_agents": {
-        "description": "List all registered agents.",
+        "description": "List all registered agents in the memory system.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 
@@ -400,15 +400,15 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # Health & Stats
     # -----------------------------------------------------------------
     "memory_health": {
-        "description": "Get memory system health report including graph stats, layer distribution, and engine status.",
+        "description": "Get a health report for the memory system: total memories, links, episodes, and breakdowns by type and layer.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     "memory_graph_stats": {
-        "description": "Get detailed graph statistics: node counts by type/layer, link counts by type, igraph metrics.",
+        "description": "Get detailed statistics about the memory graph: node counts, link counts by type, and graph structure metrics.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     "memory_neighbors": {
-        "description": "Get the neighbors of a memory in the associative graph.",
+        "description": "Get memories directly linked to a given memory, sorted by link strength.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -419,15 +419,15 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "cortex_stats": {
-        "description": "Get comprehensive CerebroCortex system statistics.",
+        "description": "Get comprehensive system statistics as raw JSON.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 
     # -----------------------------------------------------------------
-    # Dream Engine
+    # Dream Engine (offline maintenance)
     # -----------------------------------------------------------------
     "dream_run": {
-        "description": "Run a dream consolidation cycle. Processes unconsolidated episodes through 6 phases: SWS replay, pattern extraction, schema formation, emotional reprocessing, pruning, REM recombination.",
+        "description": "Run an offline memory maintenance cycle. Consolidates recent episodes, extracts patterns, prunes low-value memories, and discovers new connections. Uses LLM calls.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -437,15 +437,15 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "dream_status": {
-        "description": "Get the status and last report from the Dream Engine.",
+        "description": "Get the status and last report from the memory maintenance cycle.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 
     # -----------------------------------------------------------------
-    # Engine Capabilities (Phase D)
+    # Graph exploration & advanced tools
     # -----------------------------------------------------------------
     "find_path": {
-        "description": "Find the shortest path between two memories in the associative graph.",
+        "description": "Find the shortest chain of links between two memories.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -456,7 +456,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "common_neighbors": {
-        "description": "Find memories that are connected to both memory A and memory B.",
+        "description": "Find memories that are linked to both memory A and memory B.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -467,12 +467,12 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "create_schema": {
-        "description": "Create an abstract pattern/schema from source memories.",
+        "description": "Create a general pattern or principle derived from multiple memories. Useful for capturing recurring themes or lessons learned.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "The abstract pattern content"},
-                "source_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of source memories this schema is derived from"},
+                "content": {"type": "string", "description": "The pattern or principle to record"},
+                "source_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of the memories this pattern is derived from"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "agent_id": {"type": "string", "description": "Agent creating this schema"},
             },
@@ -480,7 +480,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "list_schemas": {
-        "description": "List all schematic memories (abstract patterns).",
+        "description": "List all stored patterns and principles.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -490,7 +490,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "find_matching_schemas": {
-        "description": "Find schemas matching given tags or concepts.",
+        "description": "Find patterns and principles matching given tags or concepts.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -501,7 +501,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "get_schema_sources": {
-        "description": "Get the source memories that a schema was derived from.",
+        "description": "Get the original memories that a pattern or principle was derived from.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -511,11 +511,11 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "store_procedure": {
-        "description": "Store a procedural memory (workflow, strategy, or how-to).",
+        "description": "Store a workflow, strategy, or how-to guide. These are recalled when you need instructions for a task.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "The procedure/workflow content"},
+                "content": {"type": "string", "description": "The workflow or how-to content"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "derived_from": {"type": "array", "items": {"type": "string"}, "description": "IDs of memories this procedure is derived from"},
                 "agent_id": {"type": "string", "description": "Agent storing this procedure"},
@@ -524,18 +524,18 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "list_procedures": {
-        "description": "List procedural memories (workflows, strategies).",
+        "description": "List all stored workflows, strategies, and how-to guides.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "agent_id": {"type": "string", "description": "Filter by agent"},
-                "min_salience": {"type": "number", "description": "Minimum salience threshold (default: 0.0)"},
+                "min_salience": {"type": "number", "description": "Minimum importance threshold (default: 0.0)"},
             },
             "required": [],
         },
     },
     "find_relevant_procedures": {
-        "description": "Find procedures matching given tags or concepts.",
+        "description": "Find workflows and how-to guides matching given tags or concepts.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -546,7 +546,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "record_procedure_outcome": {
-        "description": "Record success or failure of a procedure execution.",
+        "description": "Record whether a procedure worked or failed. This improves future procedure recommendations.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -557,15 +557,31 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "emotional_summary": {
-        "description": "Get a breakdown of memories by emotional valence.",
+        "description": "Get a breakdown of memories by emotional tone (positive, negative, neutral, mixed).",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 
     # -----------------------------------------------------------------
-    # Backward-compatible Neo-Cortex aliases
+    # File ingestion
+    # -----------------------------------------------------------------
+    "ingest_file": {
+        "description": "Read a file and store its contents as searchable memories. Supports .md, .json, .txt, and common code files. Large files are automatically split into sections.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path to the file"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to apply to all imported memories"},
+                "agent_id": {"type": "string", "description": "Agent performing the import"},
+            },
+            "required": ["file_path"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Aliases (backward-compatible)
     # -----------------------------------------------------------------
     "memory_store": {
-        "description": "[Neo-Cortex compat] Store a memory. Alias for 'remember'.",
+        "description": "Save information to memory (alias for 'remember').",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -581,7 +597,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
     },
     "memory_search": {
-        "description": "[Neo-Cortex compat] Search memories. Alias for 'recall'.",
+        "description": "Search memories (alias for 'recall').",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -758,6 +774,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "emotional_summary":
             return await _handle_emotional_summary(cortex, arguments)
 
+        elif name == "ingest_file":
+            return await _handle_ingest_file(cortex, arguments)
+
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -802,7 +821,7 @@ async def _handle_remember(cortex: CerebroCortex, args: dict) -> list[TextConten
         memory_type=memory_type,
         tags=args.get("tags"),
         salience=args.get("salience"),
-        agent_id=args.get("agent_id", "CLAUDE"),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
         session_id=args.get("session_id"),
         visibility=visibility,
         context_ids=args.get("context_ids") or args.get("responding_to"),
@@ -949,7 +968,7 @@ async def _handle_episode_start(cortex: CerebroCortex, args: dict) -> list[TextC
     episode = cortex.episode_start(
         title=args.get("title"),
         session_id=args.get("session_id"),
-        agent_id=args.get("agent_id", "CLAUDE"),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
     )
     return [TextContent(
         type="text",
@@ -1058,7 +1077,7 @@ async def _handle_store_intention(cortex: CerebroCortex, args: dict) -> list[Tex
     node = cortex.store_intention(
         content=args["content"],
         tags=args.get("tags"),
-        agent_id=args.get("agent_id", "CLAUDE"),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
         salience=args.get("salience", 0.7),
     )
     preview = node.content[:80] + "..." if len(node.content) > 80 else node.content
@@ -1359,7 +1378,7 @@ async def _handle_create_schema(cortex: CerebroCortex, args: dict) -> list[TextC
         content=args["content"],
         source_ids=args["source_ids"],
         tags=args.get("tags"),
-        agent_id=args.get("agent_id", "CLAUDE"),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
     )
     preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
     return [TextContent(
@@ -1413,7 +1432,7 @@ async def _handle_store_procedure(cortex: CerebroCortex, args: dict) -> list[Tex
         content=args["content"],
         tags=args.get("tags"),
         derived_from=args.get("derived_from"),
-        agent_id=args.get("agent_id", "CLAUDE"),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
     )
     preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
     return [TextContent(
@@ -1472,6 +1491,49 @@ async def _handle_emotional_summary(cortex: CerebroCortex, args: dict) -> list[T
     for valence, count in sorted(summary.items(), key=lambda x: -x[1]):
         lines.append(f"  {valence}: {count}")
     return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_ingest_file(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    file_path = Path(args["file_path"])
+    if not file_path.exists():
+        return [TextContent(type="text", text=f"File not found: {file_path}")]
+    if not file_path.is_file():
+        return [TextContent(type="text", text=f"Not a file: {file_path}")]
+
+    suffix = file_path.suffix.lower()
+    tags = args.get("tags", [])
+    tags.append(f"source:{file_path.name}")
+
+    try:
+        if suffix == ".md":
+            from cerebro.migration.markdown_import import MarkdownImporter
+            importer = MarkdownImporter(cortex)
+            report = importer.import_file(file_path)
+        elif suffix == ".json":
+            from cerebro.migration.json_import import JSONImporter
+            importer = JSONImporter(cortex)
+            report = importer.import_file(file_path)
+        else:
+            from cerebro.migration.text_import import TextImporter
+            importer = TextImporter(cortex)
+            report = importer.import_file(
+                file_path,
+                tags=tags,
+                agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
+            )
+
+        return [TextContent(
+            type="text",
+            text=(
+                f"Ingested {file_path.name}: "
+                f"{report.memories_imported} memories stored, "
+                f"{report.memories_skipped} skipped"
+                f"{', ' + str(len(report.errors)) + ' errors' if report.errors else ''}"
+                f" ({report.duration_seconds:.1f}s)"
+            ),
+        )]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Failed to ingest {file_path.name}: {e}")]
 
 
 # =============================================================================
@@ -1657,6 +1719,13 @@ async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptRe
 
 async def main():
     logger.info(f"Starting CerebroCortex MCP Server v{MCP_SERVER_VERSION}...")
+
+    try:
+        from cerebro.settings import load_on_startup
+        load_on_startup()
+        logger.info("Settings loaded from disk")
+    except Exception as e:
+        logger.warning(f"Failed to load settings: {e}")
 
     try:
         ctx = get_cortex()

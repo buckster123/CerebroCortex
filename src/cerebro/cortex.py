@@ -31,6 +31,7 @@ from cerebro.config import (
     COLLECTION_MEMORIES,
     COLLECTION_SESSIONS,
     DATA_DIR,
+    DEFAULT_AGENT_ID,
     SQLITE_DB,
 )
 from cerebro.engines.amygdala import AffectEngine
@@ -234,7 +235,7 @@ class CerebroCortex:
         memory_type: Optional[MemoryType] = None,
         tags: Optional[list[str]] = None,
         salience: Optional[float] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
         session_id: Optional[str] = None,
         visibility: Visibility = Visibility.SHARED,
         context_ids: Optional[list[str]] = None,
@@ -614,7 +615,7 @@ class CerebroCortex:
         self,
         title: Optional[str] = None,
         session_id: Optional[str] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> Episode:
         """Start recording a new episode."""
         return self.episodes.start_episode(
@@ -673,7 +674,7 @@ class CerebroCortex:
         self,
         content: str,
         tags: Optional[list[str]] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
         salience: float = 0.7,
     ) -> MemoryNode:
         """Store a prospective memory (future intention / TODO)."""
@@ -718,7 +719,7 @@ class CerebroCortex:
         content: str,
         source_ids: list[str],
         tags: Optional[list[str]] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> MemoryNode:
         """Create an abstract schema from source memories."""
         return self.schemas.create_schema(
@@ -761,7 +762,7 @@ class CerebroCortex:
         content: str,
         tags: Optional[list[str]] = None,
         derived_from: Optional[list[str]] = None,
-        agent_id: str = "CLAUDE",
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> MemoryNode:
         """Store a procedural memory (strategy/workflow)."""
         return self.procedural.store_procedure(
