@@ -164,8 +164,9 @@ def remember(content, memory_type, tags, salience, agent, visibility, as_json):
 ), help="Filter by type")
 @click.option("--agent", help="Filter by agent")
 @click.option("--min-salience", type=float, default=0.0, help="Minimum salience")
+@click.option("--thread", help="Conversation thread ID for THREAD visibility")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def recall(query, results, memory_type, agent, min_salience, as_json):
+def recall(query, results, memory_type, agent, min_salience, thread, as_json):
     """Search and retrieve memories."""
     ctx = get_cortex()
 
@@ -177,6 +178,7 @@ def recall(query, results, memory_type, agent, min_salience, as_json):
         memory_types=memory_types,
         agent_id=agent,
         min_salience=min_salience,
+        conversation_thread=thread,
     )
 
     if as_json:
@@ -218,11 +220,12 @@ def recall(query, results, memory_type, agent, min_salience, as_json):
 
 @cli.command("get")
 @click.argument("memory_id")
+@click.option("--agent", help="Agent ID for access check")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def get_memory(memory_id, as_json):
+def get_memory(memory_id, agent, as_json):
     """Get a memory by ID."""
     ctx = get_cortex()
-    node = ctx.get_memory(memory_id)
+    node = ctx.get_memory(memory_id, agent_id=agent)
     if not node:
         click.echo(f"Memory not found: {memory_id}", err=True)
         sys.exit(1)
@@ -254,13 +257,14 @@ def get_memory(memory_id, as_json):
 
 @cli.command("delete")
 @click.argument("memory_id")
+@click.option("--agent", help="Agent ID for access check")
 @click.option("--force", is_flag=True, help="Skip confirmation")
-def delete_memory(memory_id, force):
+def delete_memory(memory_id, agent, force):
     """Delete a memory from all stores."""
     ctx = get_cortex()
 
     if not force:
-        node = ctx.get_memory(memory_id)
+        node = ctx.get_memory(memory_id, agent_id=agent)
         if not node:
             click.echo(f"Memory not found: {memory_id}", err=True)
             sys.exit(1)
@@ -268,7 +272,7 @@ def delete_memory(memory_id, force):
         if not click.confirm("Delete this memory?"):
             return
 
-    success = ctx.delete_memory(memory_id)
+    success = ctx.delete_memory(memory_id, agent_id=agent)
     if not success:
         click.echo(f"Memory not found: {memory_id}", err=True)
         sys.exit(1)
@@ -281,8 +285,9 @@ def delete_memory(memory_id, force):
 @click.option("--tags", multiple=True, help="New tags (replaces existing, repeatable)")
 @click.option("--salience", type=float, help="New salience 0-1")
 @click.option("--visibility", type=click.Choice(["shared", "private", "thread"]))
+@click.option("--agent", help="Agent ID for access check")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def update_memory(memory_id, content, tags, salience, visibility, as_json):
+def update_memory(memory_id, content, tags, salience, visibility, agent, as_json):
     """Update a memory's content or metadata."""
     ctx = get_cortex()
 
@@ -295,6 +300,7 @@ def update_memory(memory_id, content, tags, salience, visibility, as_json):
         tags=tag_list,
         salience=salience,
         visibility=vis,
+        agent_id=agent,
     )
 
     if updated is None:
@@ -313,6 +319,25 @@ def update_memory(memory_id, content, tags, salience, visibility, as_json):
         click.echo(f"Updated: {updated.id}")
         click.echo(f"  Salience: {updated.metadata.salience:.2f}")
         click.echo(f"  Tags:     {', '.join(updated.metadata.tags) if updated.metadata.tags else 'none'}")
+
+
+# =============================================================================
+# Share (change visibility)
+# =============================================================================
+
+@cli.command("share")
+@click.argument("memory_id")
+@click.argument("visibility", type=click.Choice(["shared", "private", "thread"]))
+@click.option("--agent", help="Agent ID (must be owner)")
+def share_memory(memory_id, visibility, agent):
+    """Change a memory's visibility (only owner can change)."""
+    ctx = get_cortex()
+    vis = Visibility(visibility)
+    updated = ctx.share_memory(memory_id, new_visibility=vis, agent_id=agent)
+    if updated is None:
+        click.echo(f"Not found or not authorized: {memory_id}", err=True)
+        sys.exit(1)
+    click.echo(f"Visibility changed: {memory_id} -> {visibility}")
 
 
 # =============================================================================

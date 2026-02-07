@@ -9,6 +9,8 @@ Implements Collins & Loftus style spreading activation:
 This runs on igraph for C-speed graph traversal.
 """
 
+from typing import Optional
+
 from cerebro.config import (
     LINK_TYPE_WEIGHTS,
     SPREADING_ACTIVATION_THRESHOLD,
@@ -17,7 +19,52 @@ from cerebro.config import (
     SPREADING_MAX_HOPS,
 )
 from cerebro.storage.graph_store import GraphStore
-from cerebro.types import LinkType
+from cerebro.types import LinkType, Visibility
+
+
+def _build_visibility_cache(
+    graph: GraphStore,
+    node_ids: set[str],
+) -> dict[str, tuple[str, str, Optional[str]]]:
+    """Build a cache of (agent_id, visibility, conversation_thread) for scope checks.
+
+    Bulk-fetches from SQLite to avoid per-neighbor lookups.
+    """
+    if not node_ids:
+        return {}
+    cache = {}
+    placeholders = ",".join("?" * len(node_ids))
+    rows = graph.conn.execute(
+        f"SELECT id, agent_id, visibility, conversation_thread FROM memory_nodes WHERE id IN ({placeholders})",
+        list(node_ids),
+    ).fetchall()
+    for r in rows:
+        cache[r["id"]] = (r["agent_id"], r["visibility"], r["conversation_thread"])
+    return cache
+
+
+def _check_access(
+    vis_cache: dict[str, tuple[str, str, Optional[str]]],
+    node_id: str,
+    agent_id: Optional[str],
+    conversation_thread: Optional[str],
+) -> bool:
+    """Check if agent can access a node using the visibility cache."""
+    if agent_id is None:
+        return True
+    entry = vis_cache.get(node_id)
+    if entry is None:
+        return True  # not in cache = not in DB, will be filtered later
+    owner, vis, thread = entry
+    if vis == "shared":
+        return True
+    if vis == "private":
+        return owner == agent_id
+    if vis == "thread":
+        if conversation_thread and thread:
+            return thread == conversation_thread
+        return owner == agent_id
+    return False
 
 
 def spreading_activation(
@@ -29,6 +76,8 @@ def spreading_activation(
     activation_threshold: float = SPREADING_ACTIVATION_THRESHOLD,
     max_activated: int = SPREADING_MAX_ACTIVATED,
     link_type_weights: dict[LinkType, float] | None = None,
+    agent_id: Optional[str] = None,
+    conversation_thread: Optional[str] = None,
 ) -> dict[str, float]:
     """Spread activation from seed memories through the associative network.
 
@@ -41,6 +90,8 @@ def spreading_activation(
         activation_threshold: Minimum activation to continue spreading
         max_activated: Maximum total activated nodes (budget)
         link_type_weights: Override default link type relevance weights
+        agent_id: Agent for scope filtering (None = no filter)
+        conversation_thread: Thread ID for THREAD visibility matching
 
     Returns:
         Dict of {memory_id: activation_score} for all activated memories,
@@ -60,6 +111,12 @@ def spreading_activation(
     if not activated:
         return {}
 
+    # Build visibility cache for scope filtering
+    vis_cache: dict[str, tuple[str, str, Optional[str]]] = {}
+    if agent_id is not None:
+        # Pre-fetch seeds; neighbors will be added per hop
+        vis_cache = _build_visibility_cache(graph, set(activated.keys()))
+
     frontier = set(activated.keys())
 
     for hop in range(max_hops):
@@ -69,15 +126,31 @@ def spreading_activation(
         hop_decay = decay_per_hop ** (hop + 1)
         next_frontier: set[str] = set()
 
+        # Collect all neighbor IDs for this hop for batch visibility lookup
+        all_neighbor_ids: set[str] = set()
+        frontier_neighbors: dict[str, list[tuple[str, float, str]]] = {}
         for node_id in frontier:
             source_activation = activated.get(node_id, 0.0)
             if source_activation < activation_threshold:
                 continue
-
-            # Get neighbors via igraph (C-speed)
             neighbors = graph.get_neighbors(node_id)
+            frontier_neighbors[node_id] = neighbors
+            for nid, _, _ in neighbors:
+                if nid not in vis_cache:
+                    all_neighbor_ids.add(nid)
+
+        # Batch-fetch visibility for new neighbor IDs
+        if agent_id is not None and all_neighbor_ids:
+            vis_cache.update(_build_visibility_cache(graph, all_neighbor_ids))
+
+        for node_id, neighbors in frontier_neighbors.items():
+            source_activation = activated.get(node_id, 0.0)
 
             for neighbor_id, link_weight, link_type_str in neighbors:
+                # Scope check: skip inaccessible neighbors
+                if not _check_access(vis_cache, neighbor_id, agent_id, conversation_thread):
+                    continue
+
                 # Look up link type weight
                 try:
                     lt = LinkType(link_type_str)

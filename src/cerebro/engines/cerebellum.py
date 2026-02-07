@@ -81,22 +81,27 @@ class ProceduralEngine:
         tags: Optional[list[str]] = None,
         concepts: Optional[list[str]] = None,
         max_results: int = 5,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Find procedures relevant to the given context.
 
         Searches by tags and concepts in the graph store.
         """
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
+
         results = []
 
         if tags:
             for tag in tags:
                 rows = self._graph.conn.execute(
-                    """SELECT id FROM memory_nodes
+                    f"""SELECT id FROM memory_nodes
                     WHERE memory_type = 'procedural'
-                    AND tags_json LIKE ?
+                    AND tags_json LIKE ?{scope_clause}
                     ORDER BY salience DESC
                     LIMIT ?""",
-                    (f'%"{tag}"%', max_results),
+                    (f'%"{tag}"%', *scope_params, max_results),
                 ).fetchall()
                 for row in rows:
                     node = self._graph.get_node(row["id"])
@@ -106,12 +111,12 @@ class ProceduralEngine:
         if concepts:
             for concept in concepts:
                 rows = self._graph.conn.execute(
-                    """SELECT id FROM memory_nodes
+                    f"""SELECT id FROM memory_nodes
                     WHERE memory_type = 'procedural'
-                    AND concepts_json LIKE ?
+                    AND concepts_json LIKE ?{scope_clause}
                     ORDER BY salience DESC
                     LIMIT ?""",
-                    (f'%"{concept}"%', max_results),
+                    (f'%"{concept}"%', *scope_params, max_results),
                 ).fetchall()
                 for row in rows:
                     node = self._graph.get_node(row["id"])
@@ -162,14 +167,14 @@ class ProceduralEngine:
         self,
         agent_id: Optional[str] = None,
         min_salience: float = 0.0,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get all procedural memories, optionally filtered."""
-        query = "SELECT id FROM memory_nodes WHERE memory_type = 'procedural'"
-        params: list = []
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
 
-        if agent_id:
-            query += " AND agent_id = ?"
-            params.append(agent_id)
+        query = f"SELECT id FROM memory_nodes WHERE memory_type = 'procedural'{scope_clause}"
+        params: list = list(scope_params)
 
         if min_salience > 0:
             query += " AND salience >= ?"

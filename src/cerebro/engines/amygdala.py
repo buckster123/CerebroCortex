@@ -117,17 +117,23 @@ class AffectEngine:
         """Link this memory to others with similar emotional profile.
 
         Finds memories with matching valence and creates affective links.
+        Only links to memories the owning agent can access (scope-aware).
         """
         created = []
         valence = node.metadata.valence
 
+        # Build scope filter to prevent cross-agent PRIVATE links
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(node.metadata.agent_id)
+
         # Query for memories with same valence
         rows = self._graph.conn.execute(
-            """SELECT id, arousal, salience FROM memory_nodes
-            WHERE id != ? AND valence = ?
+            f"""SELECT id, arousal, salience FROM memory_nodes
+            WHERE id != ? AND valence = ?{scope_clause}
             ORDER BY salience DESC
             LIMIT ?""",
-            (node.id, valence.value if isinstance(valence, EmotionalValence) else valence, max_links),
+            (node.id, valence.value if isinstance(valence, EmotionalValence) else valence,
+             *scope_params, max_links),
         ).fetchall()
 
         for row in rows:
@@ -172,9 +178,17 @@ class AffectEngine:
             salience=new_salience,
         )
 
-    def get_emotional_summary(self) -> dict[str, int]:
+    def get_emotional_summary(
+        self,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
+    ) -> dict[str, int]:
         """Get a breakdown of memories by emotional valence."""
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
+
         rows = self._graph.conn.execute(
-            "SELECT valence, COUNT(*) as c FROM memory_nodes GROUP BY valence"
+            f"SELECT valence, COUNT(*) as c FROM memory_nodes WHERE 1=1{scope_clause} GROUP BY valence",
+            scope_params,
         ).fetchall()
         return {row["valence"]: row["c"] for row in rows}

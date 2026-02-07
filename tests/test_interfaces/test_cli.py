@@ -400,6 +400,33 @@ class TestProcedureCommands:
         assert "Procedure stored" in result.output or "procedure" in result.output.lower()
 
 
+class TestShareCommand:
+    def test_share_command(self, runner):
+        # Store private memory
+        result = runner.invoke(cli, [
+            "remember", "Private secret for share command test",
+            "--agent", "ALICE", "--visibility", "private",
+        ])
+        assert result.exit_code == 0
+        mem_id = result.output.split("Stored: ")[1].strip().split("\n")[0]
+
+        # Share it
+        result = runner.invoke(cli, ["share", mem_id, "shared", "--agent", "ALICE"])
+        assert result.exit_code == 0
+        assert "Visibility changed" in result.output
+
+    def test_share_non_owner_rejected(self, runner):
+        result = runner.invoke(cli, [
+            "remember", "Private secret for share rejection test",
+            "--agent", "ALICE", "--visibility", "private",
+        ])
+        assert result.exit_code == 0
+        mem_id = result.output.split("Stored: ")[1].strip().split("\n")[0]
+
+        result = runner.invoke(cli, ["share", mem_id, "shared", "--agent", "BOB"])
+        assert result.exit_code != 0
+
+
 class TestEmotionsCommand:
     def test_emotions(self, runner):
         result = runner.invoke(cli, ["emotions"])

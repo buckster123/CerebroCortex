@@ -551,6 +551,39 @@ class TestProcedures:
         assert data.get("recorded") is True or data.get("success") is True or "procedure_id" in data
 
 
+class TestShareMemory:
+    def test_share_memory_endpoint(self, client):
+        # Store private memory as ALICE
+        r = client.post("/remember", json={
+            "content": "Alice private memory for share endpoint test",
+            "agent_id": "ALICE",
+            "visibility": "private",
+        })
+        mem_id = r.json()["id"]
+
+        # ALICE shares it
+        r = client.post(f"/memory/{mem_id}/share", json={
+            "visibility": "shared",
+            "agent_id": "ALICE",
+        })
+        assert r.status_code == 200
+        assert r.json()["visibility"] == "shared"
+
+    def test_share_memory_non_owner_rejected(self, client):
+        r = client.post("/remember", json={
+            "content": "Alice private memory for share rejection test",
+            "agent_id": "ALICE",
+            "visibility": "private",
+        })
+        mem_id = r.json()["id"]
+
+        r = client.post(f"/memory/{mem_id}/share", json={
+            "visibility": "shared",
+            "agent_id": "BOB",
+        })
+        assert r.status_code == 404
+
+
 class TestEmotions:
     def test_emotional_summary(self, client):
         client.post("/remember", json={"content": "A test memory for emotional summary reporting"})

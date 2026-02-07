@@ -78,6 +78,7 @@ class SemanticEngine:
         """Create semantic links based on shared concepts.
 
         Links the given memory to existing memories that share concepts.
+        Only links to memories the owning agent can access (scope-aware).
         """
         concepts = set(node.metadata.concepts) if node.metadata.concepts else set()
         if not concepts:
@@ -86,15 +87,19 @@ class SemanticEngine:
         if not concepts:
             return []
 
+        # Build scope filter to prevent cross-agent PRIVATE links
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(node.metadata.agent_id)
+
         created = []
 
         # Find memories sharing concepts via SQLite JSON search
         for concept in concepts:
             rows = self._graph.conn.execute(
-                """SELECT id, concepts_json FROM memory_nodes
-                WHERE id != ? AND concepts_json LIKE ?
+                f"""SELECT id, concepts_json FROM memory_nodes
+                WHERE id != ? AND concepts_json LIKE ?{scope_clause}
                 LIMIT ?""",
-                (node.id, f'%"{concept}"%', max_links),
+                (node.id, f'%"{concept}"%', *scope_params, max_links),
             ).fetchall()
 
             for row in rows:
@@ -170,14 +175,23 @@ class SemanticEngine:
 
         return contradictions
 
-    def get_concept_cluster(self, concept: str, max_results: int = 20) -> list[str]:
+    def get_concept_cluster(
+        self,
+        concept: str,
+        max_results: int = 20,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
+    ) -> list[str]:
         """Get all memory IDs related to a concept."""
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
+
         rows = self._graph.conn.execute(
-            """SELECT id FROM memory_nodes
-            WHERE concepts_json LIKE ?
+            f"""SELECT id FROM memory_nodes
+            WHERE concepts_json LIKE ?{scope_clause}
             ORDER BY salience DESC
             LIMIT ?""",
-            (f'%"{concept}"%', max_results),
+            (f'%"{concept}"%', *scope_params, max_results),
         ).fetchall()
         return [r["id"] for r in rows]
 

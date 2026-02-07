@@ -50,6 +50,28 @@ from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
 logger = logging.getLogger(__name__)
 
 
+def _scope_sql(agent_id: Optional[str] = None, conversation_thread: Optional[str] = None) -> tuple[str, list]:
+    """Build a SQL WHERE clause fragment for visibility scope filtering.
+
+    Returns (clause_string, params_list). clause_string is empty when no filter needed.
+    """
+    if not agent_id:
+        return "", []
+    params = [agent_id, agent_id]
+    if conversation_thread:
+        clause = (
+            " AND (visibility='shared' OR (visibility='private' AND agent_id=?)"
+            " OR (visibility='thread' AND (agent_id=? OR conversation_thread=?)))"
+        )
+        params.append(conversation_thread)
+    else:
+        clause = (
+            " AND (visibility='shared' OR (visibility='private' AND agent_id=?)"
+            " OR (visibility='thread' AND agent_id=?))"
+        )
+    return clause, params
+
+
 class CerebroCortex:
     """The brain. Wires all engines together into a unified memory system."""
 
@@ -135,10 +157,38 @@ class CerebroCortex:
             return COLLECTION_MEMORIES
 
     @staticmethod
+    def _can_access(
+        node: MemoryNode,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
+    ) -> bool:
+        """Check if a given agent can access this memory based on visibility.
+
+        Rules:
+        - No agent_id filter = see everything (backwards compat)
+        - SHARED: visible to all agents
+        - PRIVATE: visible only to the owning agent
+        - THREAD: visible if conversation_thread matches, else owner-only
+        """
+        if agent_id is None:
+            return True
+        vis = node.metadata.visibility
+        if vis == Visibility.SHARED:
+            return True
+        if vis == Visibility.PRIVATE:
+            return node.metadata.agent_id == agent_id
+        if vis == Visibility.THREAD:
+            if conversation_thread and node.metadata.conversation_thread:
+                return node.metadata.conversation_thread == conversation_thread
+            return node.metadata.agent_id == agent_id
+        return False
+
+    @staticmethod
     def _build_where_filter(
         memory_types: Optional[list[MemoryType]] = None,
         agent_id: Optional[str] = None,
         min_salience: float = 0.0,
+        conversation_thread: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """Build a ChromaDB where clause for metadata filtering."""
         clauses = []
@@ -151,7 +201,19 @@ class CerebroCortex:
                 clauses.append({"memory_type": {"$in": type_values}})
 
         if agent_id:
-            clauses.append({"agent_id": agent_id})
+            vis_clauses = [
+                {"visibility": "shared"},
+                {"$and": [{"visibility": "private"}, {"agent_id": agent_id}]},
+            ]
+            if conversation_thread:
+                vis_clauses.append(
+                    {"$and": [{"visibility": "thread"}, {"conversation_thread": conversation_thread}]}
+                )
+            else:
+                vis_clauses.append(
+                    {"$and": [{"visibility": "thread"}, {"agent_id": agent_id}]}
+                )
+            clauses.append({"$or": vis_clauses})
 
         if min_salience > 0.0:
             clauses.append({"salience": {"$gte": min_salience}})
@@ -259,6 +321,7 @@ class CerebroCortex:
         agent_id: Optional[str] = None,
         min_salience: float = 0.0,
         context_ids: Optional[list[str]] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[tuple[MemoryNode, float]]:
         """Recall memories through the full retrieval pipeline.
 
@@ -276,12 +339,15 @@ class CerebroCortex:
             agent_id: Filter by agent
             min_salience: Minimum salience threshold
             context_ids: Memory IDs to use as activation seeds
+            conversation_thread: Thread ID for THREAD-visibility matching
 
         Returns:
             List of (MemoryNode, score) tuples, sorted by score descending.
         """
         # 1. Vector search across all ChromaDB collections
-        where_filter = self._build_where_filter(memory_types, agent_id, min_salience)
+        where_filter = self._build_where_filter(
+            memory_types, agent_id, min_salience, conversation_thread,
+        )
         vector_results: dict[str, float] = {}
         per_collection = max(top_k, 10)
 
@@ -315,12 +381,14 @@ class CerebroCortex:
             activated = self.links.spread_activation(
                 seed_ids=seed_ids,
                 seed_weights=seed_weights,
+                agent_id=agent_id,
+                conversation_thread=conversation_thread,
             )
 
         # 3. Merge candidates: vector hits + activated nodes
         candidate_ids = list(set(vector_results.keys()) | set(activated.keys()))
 
-        # Filter by type/agent/salience (belt-and-suspenders with ChromaDB where)
+        # Filter by type/scope/salience (belt-and-suspenders with ChromaDB where)
         filtered_ids = []
         for mid in candidate_ids:
             node = self._graph.get_node(mid)
@@ -328,7 +396,7 @@ class CerebroCortex:
                 continue
             if memory_types and node.metadata.memory_type not in memory_types:
                 continue
-            if agent_id and node.metadata.agent_id != agent_id:
+            if not self._can_access(node, agent_id, conversation_thread):
                 continue
             if node.metadata.salience < min_salience:
                 continue
@@ -385,17 +453,36 @@ class CerebroCortex:
     # GET / DELETE / UPDATE single memory
     # =========================================================================
 
-    def get_memory(self, memory_id: str) -> Optional[MemoryNode]:
-        """Get a single memory by ID."""
-        return self._graph.get_node(memory_id)
+    def get_memory(
+        self,
+        memory_id: str,
+        agent_id: Optional[str] = None,
+    ) -> Optional[MemoryNode]:
+        """Get a single memory by ID.
 
-    def delete_memory(self, memory_id: str) -> bool:
+        If agent_id is provided, returns None when the agent lacks access.
+        """
+        node = self._graph.get_node(memory_id)
+        if not node:
+            return None
+        if not self._can_access(node, agent_id):
+            return None
+        return node
+
+    def delete_memory(
+        self,
+        memory_id: str,
+        agent_id: Optional[str] = None,
+    ) -> bool:
         """Delete a memory from both GraphStore and ChromaDB.
 
+        If agent_id is provided, only the owner can delete.
         Returns True if found and deleted.
         """
         node = self._graph.get_node(memory_id)
         if not node:
+            return False
+        if not self._can_access(node, agent_id):
             return False
 
         # Delete from graph store (SQLite + igraph rebuild)
@@ -414,14 +501,18 @@ class CerebroCortex:
         tags: Optional[list[str]] = None,
         salience: Optional[float] = None,
         visibility: Optional[Visibility] = None,
+        agent_id: Optional[str] = None,
     ) -> Optional[MemoryNode]:
         """Update a memory's content and/or metadata.
 
+        If agent_id is provided, checks access before updating.
         If content is provided, re-embeds in ChromaDB.
-        Returns the updated MemoryNode, or None if not found.
+        Returns the updated MemoryNode, or None if not found or access denied.
         """
         node = self._graph.get_node(memory_id)
         if not node:
+            return None
+        if not self._can_access(node, agent_id):
             return None
 
         # Build metadata updates
@@ -453,6 +544,30 @@ class CerebroCortex:
         self._chroma.update_node(coll, updated)
 
         return updated
+
+    def share_memory(
+        self,
+        memory_id: str,
+        new_visibility: Visibility,
+        agent_id: Optional[str] = None,
+    ) -> Optional[MemoryNode]:
+        """Change a memory's visibility. Only the owner can change visibility.
+
+        Args:
+            memory_id: Memory to change
+            new_visibility: Target visibility level
+            agent_id: Requesting agent (must be owner if provided)
+
+        Returns:
+            Updated MemoryNode, or None if not found or not authorized.
+        """
+        node = self._graph.get_node(memory_id)
+        if not node:
+            return None
+        # Only the owner can change visibility
+        if agent_id and node.metadata.agent_id != agent_id:
+            return None
+        return self.update_memory(memory_id, visibility=new_visibility)
 
     # =========================================================================
     # Episode management (delegates to hippocampus)
@@ -517,10 +632,12 @@ class CerebroCortex:
         self,
         agent_id: Optional[str] = None,
         min_salience: float = 0.3,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get all pending intentions."""
         return self.executive.get_pending_intentions(
             agent_id=agent_id, min_salience=min_salience,
+            conversation_thread=conversation_thread,
         )
 
     def resolve_intention(self, memory_id: str) -> bool:
@@ -555,17 +672,28 @@ class CerebroCortex:
             content=content, source_ids=source_ids, tags=tags, agent_id=agent_id,
         )
 
-    def list_schemas(self, agent_id: Optional[str] = None) -> list[MemoryNode]:
+    def list_schemas(
+        self,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
+    ) -> list[MemoryNode]:
         """Get all schematic memories."""
-        return self.schemas.get_all_schemas(agent_id=agent_id)
+        return self.schemas.get_all_schemas(
+            agent_id=agent_id, conversation_thread=conversation_thread,
+        )
 
     def find_matching_schemas(
         self,
         tags: Optional[list[str]] = None,
         concepts: Optional[list[str]] = None,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Find schemas matching tags or concepts."""
-        return self.schemas.find_matching_schemas(tags=tags, concepts=concepts)
+        return self.schemas.find_matching_schemas(
+            tags=tags, concepts=concepts,
+            agent_id=agent_id, conversation_thread=conversation_thread,
+        )
 
     def get_schema_sources(self, schema_id: str) -> list[str]:
         """Get source memory IDs for a schema."""
@@ -591,19 +719,26 @@ class CerebroCortex:
         self,
         agent_id: Optional[str] = None,
         min_salience: float = 0.0,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get all procedural memories."""
         return self.procedural.get_all_procedures(
             agent_id=agent_id, min_salience=min_salience,
+            conversation_thread=conversation_thread,
         )
 
     def find_relevant_procedures(
         self,
         tags: Optional[list[str]] = None,
         concepts: Optional[list[str]] = None,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Find procedures matching tags or concepts."""
-        return self.procedural.find_relevant_procedures(tags=tags, concepts=concepts)
+        return self.procedural.find_relevant_procedures(
+            tags=tags, concepts=concepts,
+            agent_id=agent_id, conversation_thread=conversation_thread,
+        )
 
     def record_procedure_outcome(self, procedure_id: str, success: bool) -> bool:
         """Record success/failure of a procedure."""
@@ -613,9 +748,15 @@ class CerebroCortex:
     # Emotional summary (AffectEngine / Amygdala)
     # =========================================================================
 
-    def get_emotional_summary(self) -> dict[str, int]:
+    def get_emotional_summary(
+        self,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
+    ) -> dict[str, int]:
         """Get breakdown of memories by emotional valence."""
-        return self.affect.get_emotional_summary()
+        return self.affect.get_emotional_summary(
+            agent_id=agent_id, conversation_thread=conversation_thread,
+        )
 
     # =========================================================================
     # Stats

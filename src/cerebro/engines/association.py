@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from cerebro.activation.spreading import spreading_activation
+from cerebro.types import Visibility
 from cerebro.config import LINK_TYPE_WEIGHTS
 from cerebro.models.link import AssociativeLink
 from cerebro.models.memory import MemoryNode
@@ -102,23 +103,29 @@ class LinkEngine:
         return created
 
     def _link_by_shared_tags(self, node: MemoryNode, max_links: int = 5) -> list[str]:
-        """Find and link memories sharing tags with the given node."""
+        """Find and link memories sharing tags with the given node.
+
+        Only links to memories the owning agent can access (scope-aware).
+        """
         created = []
         tags = set(node.metadata.tags)
         if not tags:
             return created
 
+        # Build scope filter to prevent cross-agent PRIVATE links
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(node.metadata.agent_id)
+
         # Query SQLite for memories sharing any tag
-        placeholders = ",".join("?" * len(tags))
         rows = self._graph.conn.execute(
             f"""SELECT DISTINCT id, tags_json FROM memory_nodes
             WHERE id != ? AND id IN (
                 SELECT id FROM memory_nodes
                 WHERE tags_json LIKE '%' || ? || '%'
                 {('OR tags_json LIKE ' + "'%' || ? || '%' ") * (len(tags) - 1) if len(tags) > 1 else ''}
-            )
+            ){scope_clause}
             LIMIT ?""",
-            (node.id, *tags, max_links),
+            (node.id, *tags, *scope_params, max_links),
         ).fetchall()
 
         import json
@@ -178,6 +185,8 @@ class LinkEngine:
         seed_weights: list[float],
         max_hops: int = 2,
         max_activated: int = 50,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> dict[str, float]:
         """Spread activation from seeds through the associative network.
 
@@ -190,6 +199,8 @@ class LinkEngine:
             seed_weights=seed_weights,
             max_hops=max_hops,
             max_activated=max_activated,
+            agent_id=agent_id,
+            conversation_thread=conversation_thread,
         )
 
     # =========================================================================

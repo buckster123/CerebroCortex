@@ -17,6 +17,7 @@ from cerebro.interfaces.mcp_server import (
     _handle_get_memory,
     _handle_delete_memory,
     _handle_update_memory,
+    _handle_share_memory,
     _handle_episode_start,
     _handle_episode_add_step,
     _handle_episode_end,
@@ -67,7 +68,7 @@ class TestToolSchemas:
             assert schema["input_schema"]["type"] == "object"
 
     def test_tool_count(self):
-        assert len(TOOL_SCHEMAS) == 38
+        assert len(TOOL_SCHEMAS) == 39
 
     def test_backward_compat_tools_exist(self):
         assert "memory_store" in TOOL_SCHEMAS
@@ -578,6 +579,48 @@ class TestEmotionalSummaryHandler:
         await _handle_remember(cortex, {"content": "A test memory for emotional summary reporting"})
         result = await _handle_emotional_summary(cortex, {})
         assert len(result) == 1
+
+
+class TestShareMemoryHandler:
+    @pytest.mark.asyncio
+    async def test_share_memory_tool_exists(self):
+        assert "share_memory" in TOOL_SCHEMAS
+
+    @pytest.mark.asyncio
+    async def test_share_memory_owner_can_share(self, cortex):
+        # Store a private memory as ALICE
+        result = await _handle_remember(cortex, {
+            "content": "Alice private memory for share test",
+            "agent_id": "ALICE",
+            "visibility": "private",
+        })
+        mem_id = result[0].text.split("ID: ")[1].split(")")[0]
+
+        # ALICE shares it
+        result = await _handle_share_memory(cortex, {
+            "memory_id": mem_id,
+            "visibility": "shared",
+            "agent_id": "ALICE",
+        })
+        assert "Visibility changed" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_share_memory_non_owner_rejected(self, cortex):
+        # Store a private memory as ALICE
+        result = await _handle_remember(cortex, {
+            "content": "Alice private memory for share rejection test",
+            "agent_id": "ALICE",
+            "visibility": "private",
+        })
+        mem_id = result[0].text.split("ID: ")[1].split(")")[0]
+
+        # BOB tries to share it
+        result = await _handle_share_memory(cortex, {
+            "memory_id": mem_id,
+            "visibility": "shared",
+            "agent_id": "BOB",
+        })
+        assert "not authorized" in result[0].text.lower() or "Not found" in result[0].text
 
 
 class TestMCPResources:

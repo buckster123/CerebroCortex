@@ -141,6 +141,7 @@ class RecallRequest(BaseModel):
     agent_id: Optional[str] = None
     min_salience: float = 0.0
     context_ids: Optional[list[str]] = None
+    conversation_thread: Optional[str] = None
 
 class AssociateRequest(BaseModel):
     source_id: str
@@ -222,7 +223,7 @@ async def root():
         "endpoints": [
             "GET /health", "GET /stats", "GET /ui", "GET /q/{query}",
             "POST /remember", "POST /recall", "POST /associate",
-            "GET /memory/{id}", "DELETE /memory/{id}", "PATCH /memory/{id}",
+            "GET /memory/{id}", "DELETE /memory/{id}", "PATCH /memory/{id}", "POST /memory/{id}/share",
             "POST /episodes/start", "POST /episodes/{id}/step", "POST /episodes/{id}/end",
             "GET /episodes", "GET /episodes/{id}", "GET /episodes/{id}/memories",
             "POST /intentions", "GET /intentions", "POST /intentions/{id}/resolve",
@@ -361,6 +362,7 @@ async def recall(req: RecallRequest):
         agent_id=req.agent_id,
         min_salience=req.min_salience,
         context_ids=req.context_ids,
+        conversation_thread=req.conversation_thread,
     )
 
     return {
@@ -1103,10 +1105,10 @@ async def emotional_summary():
 # =============================================================================
 
 @app.get("/memory/{memory_id}")
-async def get_memory(memory_id: str):
+async def get_memory(memory_id: str, agent_id: Optional[str] = None):
     """Get a single memory by ID."""
     ctx = get_cortex()
-    node = ctx.get_memory(memory_id)
+    node = ctx.get_memory(memory_id, agent_id=agent_id)
     if not node:
         raise HTTPException(404, f"Memory not found: {memory_id}")
     return {
@@ -1127,17 +1129,17 @@ async def get_memory(memory_id: str):
 
 
 @app.delete("/memory/{memory_id}")
-async def delete_memory(memory_id: str):
+async def delete_memory(memory_id: str, agent_id: Optional[str] = None):
     """Delete a memory from all stores."""
     ctx = get_cortex()
-    success = ctx.delete_memory(memory_id)
+    success = ctx.delete_memory(memory_id, agent_id=agent_id)
     if not success:
         raise HTTPException(404, f"Memory not found: {memory_id}")
     return {"deleted": True, "id": memory_id}
 
 
 @app.patch("/memory/{memory_id}")
-async def update_memory(memory_id: str, req: UpdateMemoryRequest):
+async def update_memory(memory_id: str, req: UpdateMemoryRequest, agent_id: Optional[str] = None):
     """Update a memory's content and/or metadata."""
     ctx = get_cortex()
     visibility = None
@@ -1153,6 +1155,7 @@ async def update_memory(memory_id: str, req: UpdateMemoryRequest):
         tags=req.tags,
         salience=req.salience,
         visibility=visibility,
+        agent_id=agent_id,
     )
     if updated is None:
         raise HTTPException(404, f"Memory not found: {memory_id}")
@@ -1162,6 +1165,33 @@ async def update_memory(memory_id: str, req: UpdateMemoryRequest):
         "type": updated.metadata.memory_type.value,
         "salience": round(updated.metadata.salience, 3),
         "tags": updated.metadata.tags,
+    }
+
+
+class ShareMemoryRequest(BaseModel):
+    visibility: str
+    agent_id: Optional[str] = None
+
+
+@app.post("/memory/{memory_id}/share")
+async def share_memory(memory_id: str, req: ShareMemoryRequest):
+    """Change a memory's visibility. Only the owner can change visibility."""
+    ctx = get_cortex()
+    try:
+        new_vis = Visibility(req.visibility)
+    except ValueError:
+        raise HTTPException(400, f"Invalid visibility: {req.visibility}")
+
+    updated = ctx.share_memory(
+        memory_id=memory_id,
+        new_visibility=new_vis,
+        agent_id=req.agent_id,
+    )
+    if updated is None:
+        raise HTTPException(404, f"Not found or not authorized: {memory_id}")
+    return {
+        "id": updated.id,
+        "visibility": updated.metadata.visibility.value,
     }
 
 

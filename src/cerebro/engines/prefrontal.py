@@ -75,15 +75,15 @@ class ExecutiveEngine:
         self,
         agent_id: Optional[str] = None,
         min_salience: float = 0.3,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get all pending prospective memories, sorted by salience."""
-        query = """SELECT id FROM memory_nodes
-            WHERE memory_type = 'prospective' AND salience >= ?"""
-        params: list = [min_salience]
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
 
-        if agent_id:
-            query += " AND agent_id = ?"
-            params.append(agent_id)
+        query = f"""SELECT id FROM memory_nodes
+            WHERE memory_type = 'prospective' AND salience >= ?{scope_clause}"""
+        params: list = [min_salience, *scope_params]
 
         query += " ORDER BY salience DESC"
 
@@ -219,15 +219,15 @@ class ExecutiveEngine:
         self,
         agent_id: Optional[str] = None,
         limit: int = 20,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get current working memory contents (high-activation recent memories)."""
-        query = """SELECT id FROM memory_nodes
-            WHERE layer = 'working'"""
-        params: list = []
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
 
-        if agent_id:
-            query += " AND agent_id = ?"
-            params.append(agent_id)
+        query = f"""SELECT id FROM memory_nodes
+            WHERE layer = 'working'{scope_clause}"""
+        params: list = list(scope_params)
 
         query += " ORDER BY last_retrievability DESC, salience DESC LIMIT ?"
         params.append(limit)

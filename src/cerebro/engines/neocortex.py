@@ -86,20 +86,25 @@ class SchemaEngine:
         tags: Optional[list[str]] = None,
         concepts: Optional[list[str]] = None,
         max_results: int = 5,
+        agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Find schemas matching given tags or concepts."""
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
+
         results = []
         seen_ids: set[str] = set()
 
         if tags:
             for tag in tags:
                 rows = self._graph.conn.execute(
-                    """SELECT id FROM memory_nodes
+                    f"""SELECT id FROM memory_nodes
                     WHERE memory_type = 'schematic'
-                    AND tags_json LIKE ?
+                    AND tags_json LIKE ?{scope_clause}
                     ORDER BY salience DESC
                     LIMIT ?""",
-                    (f'%"{tag}"%', max_results),
+                    (f'%"{tag}"%', *scope_params, max_results),
                 ).fetchall()
                 for row in rows:
                     if row["id"] not in seen_ids:
@@ -111,12 +116,12 @@ class SchemaEngine:
         if concepts:
             for concept in concepts:
                 rows = self._graph.conn.execute(
-                    """SELECT id FROM memory_nodes
+                    f"""SELECT id FROM memory_nodes
                     WHERE memory_type = 'schematic'
-                    AND concepts_json LIKE ?
+                    AND concepts_json LIKE ?{scope_clause}
                     ORDER BY salience DESC
                     LIMIT ?""",
-                    (f'%"{concept}"%', max_results),
+                    (f'%"{concept}"%', *scope_params, max_results),
                 ).fetchall()
                 for row in rows:
                     if row["id"] not in seen_ids:
@@ -164,18 +169,16 @@ class SchemaEngine:
     def get_all_schemas(
         self,
         agent_id: Optional[str] = None,
+        conversation_thread: Optional[str] = None,
     ) -> list[MemoryNode]:
         """Get all schematic memories."""
-        query = "SELECT id FROM memory_nodes WHERE memory_type = 'schematic'"
-        params: list = []
+        from cerebro.cortex import _scope_sql
+        scope_clause, scope_params = _scope_sql(agent_id, conversation_thread)
 
-        if agent_id:
-            query += " AND agent_id = ?"
-            params.append(agent_id)
-
+        query = f"SELECT id FROM memory_nodes WHERE memory_type = 'schematic'{scope_clause}"
         query += " ORDER BY salience DESC"
 
-        rows = self._graph.conn.execute(query, params).fetchall()
+        rows = self._graph.conn.execute(query, scope_params).fetchall()
         return [n for r in rows if (n := self._graph.get_node(r["id"]))]
 
     def count_schemas(self) -> int:

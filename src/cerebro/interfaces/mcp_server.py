@@ -133,6 +133,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "items": {"type": "string"},
                     "description": "Seed memory IDs for spreading activation",
                 },
+                "conversation_thread": {"type": "string", "description": "Thread ID for THREAD-visibility matching"},
             },
             "required": ["query"],
         },
@@ -165,6 +166,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string", "description": "Memory ID to retrieve"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
             "required": ["memory_id"],
         },
@@ -175,6 +177,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string", "description": "Memory ID to delete"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
             "required": ["memory_id"],
         },
@@ -193,8 +196,26 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "enum": ["private", "shared", "thread"],
                     "description": "New visibility scope",
                 },
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
             },
             "required": ["memory_id"],
+        },
+    },
+
+    "share_memory": {
+        "description": "Change a memory's visibility (e.g., share a private memory). Only the owner can change visibility.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to change"},
+                "visibility": {
+                    "type": "string",
+                    "enum": ["private", "shared", "thread"],
+                    "description": "New visibility scope",
+                },
+                "agent_id": {"type": "string", "description": "Requesting agent (must be owner)"},
+            },
+            "required": ["memory_id", "visibility"],
         },
     },
 
@@ -621,6 +642,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "update_memory":
             return await _handle_update_memory(cortex, arguments)
 
+        elif name == "share_memory":
+            return await _handle_share_memory(cortex, arguments)
+
         # =============================================================
         # Episodes
         # =============================================================
@@ -811,6 +835,7 @@ async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]
         agent_id=args.get("agent_id", args.get("agent_filter")),
         min_salience=args.get("min_salience", 0.0),
         context_ids=args.get("context_ids"),
+        conversation_thread=args.get("conversation_thread"),
     )
 
     if not results:
@@ -846,7 +871,7 @@ async def _handle_associate(cortex: CerebroCortex, args: dict) -> list[TextConte
 
 
 async def _handle_get_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
-    node = cortex.get_memory(args["memory_id"])
+    node = cortex.get_memory(args["memory_id"], agent_id=args.get("agent_id"))
     if not node:
         return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
     return [TextContent(type="text", text=json.dumps({
@@ -867,7 +892,7 @@ async def _handle_get_memory(cortex: CerebroCortex, args: dict) -> list[TextCont
 
 
 async def _handle_delete_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
-    success = cortex.delete_memory(args["memory_id"])
+    success = cortex.delete_memory(args["memory_id"], agent_id=args.get("agent_id"))
     if not success:
         return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
     return [TextContent(type="text", text=f"Deleted memory: {args['memory_id']}")]
@@ -887,6 +912,7 @@ async def _handle_update_memory(cortex: CerebroCortex, args: dict) -> list[TextC
         tags=args.get("tags"),
         salience=args.get("salience"),
         visibility=visibility,
+        agent_id=args.get("agent_id"),
     )
     if updated is None:
         return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
@@ -896,6 +922,25 @@ async def _handle_update_memory(cortex: CerebroCortex, args: dict) -> list[TextC
         f"Salience: {updated.metadata.salience:.2f} | "
         f"Tags: {', '.join(updated.metadata.tags)}"
     ))]
+
+
+async def _handle_share_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    try:
+        new_vis = Visibility(args["visibility"])
+    except ValueError:
+        return [TextContent(type="text", text=f"Invalid visibility: {args['visibility']}")]
+
+    updated = cortex.share_memory(
+        memory_id=args["memory_id"],
+        new_visibility=new_vis,
+        agent_id=args.get("agent_id"),
+    )
+    if updated is None:
+        return [TextContent(type="text", text=f"Not found or not authorized: {args['memory_id']}")]
+    return [TextContent(
+        type="text",
+        text=f"Visibility changed: {args['memory_id']} -> {new_vis.value}",
+    )]
 
 
 async def _handle_episode_start(cortex: CerebroCortex, args: dict) -> list[TextContent]:
