@@ -584,6 +584,206 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--green-dim); }
 
 /* ================================================================
+   SETTINGS PANEL
+   ================================================================ */
+#panel-settings {
+  padding: 20px;
+  overflow-y: auto;
+  gap: 16px;
+}
+
+.settings-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.settings-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.setting-row label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+.setting-row input, .setting-row select {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+  max-width: 320px;
+}
+.setting-row input:focus, .setting-row select:focus {
+  border-color: var(--green);
+}
+.setting-row select { cursor: pointer; }
+.setting-row select option { background: var(--bg-card); }
+
+.password-wrapper {
+  display: flex;
+  gap: 6px;
+  max-width: 320px;
+}
+.password-wrapper input { flex: 1; }
+.password-toggle {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.password-toggle:hover { color: var(--cyan); border-color: var(--cyan); }
+
+.dev-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.dev-mode-toggle input[type="checkbox"] {
+  accent-color: var(--magenta);
+  width: 16px; height: 16px;
+}
+.dev-mode-toggle span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--magenta);
+}
+
+.settings-dev { display: none; }
+.settings-dev.visible { display: block; }
+
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ================================================================
+   AGENT SELECTOR
+   ================================================================ */
+#agent-selector {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  margin-left: 16px;
+}
+#agent-selector:focus { border-color: var(--green); }
+#agent-selector option { background: var(--bg-card); }
+
+/* ================================================================
+   DREAM REPORT CARDS
+   ================================================================ */
+.dream-report-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--green);
+}
+.dream-report-card.fail { border-left-color: var(--magenta); }
+.dream-report-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dream-report-header .agent-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(0,255,65,0.1);
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.dream-report-header .status-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.dream-report-header .status-badge.ok {
+  background: rgba(0,255,65,0.1);
+  color: var(--green);
+}
+.dream-report-header .status-badge.fail {
+  background: rgba(255,0,85,0.1);
+  color: var(--magenta);
+}
+
+.dream-phase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.dream-phase-detail {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  border-left: 3px solid var(--green);
+  font-size: 11px;
+}
+.dream-phase-detail.fail { border-left-color: var(--magenta); }
+.dream-phase-detail .phase-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+}
+.dream-phase-detail .phase-stats {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.dream-phase-detail .phase-stats b { color: var(--text-bright); }
+.dream-phase-detail .phase-notes {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* ================================================================
    RESPONSIVE
    ================================================================ */
 @media (max-width: 768px) {
@@ -621,6 +821,9 @@ body {
   <button class="nav-btn" onclick="switchTab('health')" id="nav-health">
     &#x2665;<span class="tooltip">Health</span>
   </button>
+  <button class="nav-btn" onclick="switchTab('settings')" id="nav-settings">
+    &#x2699;<span class="tooltip">Settings</span>
+  </button>
   <div class="nav-spacer"></div>
   <button class="nav-btn" onclick="location.reload()">
     &#x21BB;<span class="tooltip">Refresh</span>
@@ -633,6 +836,9 @@ body {
   <!-- Header Bar -->
   <div id="header">
     <h1>CerebroCortex</h1>
+    <select id="agent-selector" onchange="onAgentChange()" title="Filter by agent">
+      <option value="">All Agents</option>
+    </select>
     <div class="header-spacer"></div>
     <div class="header-stat">Nodes: <b id="hdr-nodes">-</b></div>
     <div class="header-stat">Links: <b id="hdr-links">-</b></div>
@@ -740,6 +946,133 @@ body {
     <div id="health-content"></div>
   </div>
 
+  <!-- ============== SETTINGS ============== -->
+  <div class="panel" id="panel-settings">
+    <h2 style="font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--cyan);margin-bottom:16px">System Settings</h2>
+
+    <div class="settings-section">
+      <h3>LLM Configuration</h3>
+      <div class="setting-row">
+        <label>Primary Provider</label>
+        <select id="set-llm-primary-provider">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="ollama">Ollama (Local)</option>
+          <option value="openai_compat">OpenAI-Compatible</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>Primary Model</label>
+        <input type="text" id="set-llm-primary-model" placeholder="e.g. claude-sonnet-4-5-20250929">
+      </div>
+      <div class="setting-row">
+        <label>Fallback Provider</label>
+        <select id="set-llm-fallback-provider">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="ollama">Ollama (Local)</option>
+          <option value="openai_compat">OpenAI-Compatible</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>Fallback Model</label>
+        <input type="text" id="set-llm-fallback-model" placeholder="e.g. qwen/qwen3-8b">
+      </div>
+      <div class="setting-row">
+        <label>Base URL</label>
+        <input type="text" id="set-llm-base-url" placeholder="http://localhost:1234">
+      </div>
+      <div class="setting-row">
+        <label>Temperature</label>
+        <input type="number" id="set-llm-temperature" min="0" max="2" step="0.1">
+      </div>
+      <div class="setting-row">
+        <label>Max Tokens</label>
+        <input type="number" id="set-llm-max-tokens" min="64" max="8192" step="64">
+      </div>
+      <div class="setting-row">
+        <label>Strip Think</label>
+        <select id="set-llm-strip-think"><option value="true">Yes</option><option value="false">No</option></select>
+      </div>
+      <div class="setting-row">
+        <label>No Think</label>
+        <select id="set-llm-no-think"><option value="true">Yes</option><option value="false">No</option></select>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>API Keys</h3>
+      <div class="setting-row">
+        <label>Anthropic Key</label>
+        <div class="password-wrapper">
+          <input type="password" id="set-api-key" placeholder="sk-ant-...">
+          <button class="password-toggle" onclick="togglePassword()">Show</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Dream Engine</h3>
+      <div class="setting-row">
+        <label>Max LLM Calls</label>
+        <input type="number" id="set-dream-max-llm" min="0" max="100" step="1">
+      </div>
+      <div class="setting-row">
+        <label>Pattern Budget</label>
+        <input type="number" id="set-dream-budget-pattern" min="0" max="50" step="1">
+      </div>
+      <div class="setting-row">
+        <label>Schema Budget</label>
+        <input type="number" id="set-dream-budget-schema" min="0" max="50" step="1">
+      </div>
+      <div class="setting-row">
+        <label>REM Budget</label>
+        <input type="number" id="set-dream-budget-rem" min="0" max="50" step="1">
+      </div>
+      <div class="setting-row">
+        <label>Cluster Threshold</label>
+        <input type="number" id="set-dream-cluster-threshold" min="0" max="1" step="0.05">
+      </div>
+      <div class="setting-row">
+        <label>REM Pair Checks</label>
+        <input type="number" id="set-dream-rem-pair-checks" min="0" max="100" step="1">
+      </div>
+    </div>
+
+    <div class="dev-mode-toggle" onclick="toggleDevSettings()">
+      <input type="checkbox" id="dev-mode-check">
+      <span>Dev Mode &mdash; Scoring Weights &amp; ACT-R Parameters</span>
+    </div>
+
+    <div class="settings-dev" id="settings-dev">
+      <div class="settings-section">
+        <h3>Scoring Weights</h3>
+        <div class="setting-row"><label>Vector</label><input type="number" id="set-score-vector" min="0" max="1" step="0.05"></div>
+        <div class="setting-row"><label>Activation</label><input type="number" id="set-score-activation" min="0" max="1" step="0.05"></div>
+        <div class="setting-row"><label>Retrievability</label><input type="number" id="set-score-retrievability" min="0" max="1" step="0.05"></div>
+        <div class="setting-row"><label>Salience</label><input type="number" id="set-score-salience" min="0" max="1" step="0.05"></div>
+      </div>
+
+      <div class="settings-section">
+        <h3>ACT-R / Spreading Activation</h3>
+        <div class="setting-row"><label>Decay Rate</label><input type="number" id="set-actr-decay" min="0" max="2" step="0.1"></div>
+        <div class="setting-row"><label>Noise</label><input type="number" id="set-actr-noise" min="0" max="2" step="0.1"></div>
+        <div class="setting-row"><label>Max Hops</label><input type="number" id="set-spread-hops" min="1" max="5" step="1"></div>
+        <div class="setting-row"><label>Decay/Hop</label><input type="number" id="set-spread-decay" min="0" max="1" step="0.1"></div>
+      </div>
+
+      <div class="settings-section">
+        <h3>FSRS</h3>
+        <div class="setting-row"><label>Initial Stability</label><input type="number" id="set-fsrs-stability" min="0" max="30" step="0.5"></div>
+        <div class="setting-row"><label>Initial Difficulty</label><input type="number" id="set-fsrs-difficulty" min="1" max="10" step="0.5"></div>
+      </div>
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn" onclick="saveSettings()">Save Settings</button>
+      <button class="btn btn-cyan" onclick="resetSettings()">Reset to Defaults</button>
+    </div>
+    <div id="settings-result" style="margin-top:12px;font-size:11px"></div>
+  </div>
+
 </div>
 
 <!-- Toasts -->
@@ -755,6 +1088,7 @@ let graphData = null;
 let renderMode = '3d'; // '3d' or '2d'
 let showLabels = false;
 let hasWebGL = false;
+let currentAgentId = ''; // '' = all agents
 
 const TYPE_COLORS = {
   episodic:    '#00ff41',
@@ -893,13 +1227,15 @@ function switchTab(tab) {
   if (tab === 'graph') loadGraph();
   if (tab === 'dream') loadDreamStatus();
   if (tab === 'health') loadHealth();
+  if (tab === 'settings') loadSettings();
 }
 
 /* =================================================================
    DASHBOARD
    ================================================================= */
 async function loadDashboard() {
-  const data = await api('/stats');
+  const qs = currentAgentId ? `?agent_id=${encodeURIComponent(currentAgentId)}` : '';
+  const data = await api('/stats' + qs);
   if (!data) return;
 
   // Header stats
@@ -959,7 +1295,9 @@ async function loadDashboard() {
    ================================================================= */
 async function loadGraph() {
   document.getElementById('graph-loading').style.display = 'block';
-  const data = await api('/graph/data?limit=500');
+  let url = '/graph/data?limit=500';
+  if (currentAgentId) url += `&agent_id=${encodeURIComponent(currentAgentId)}`;
+  const data = await api(url);
   if (!data) {
     document.getElementById('graph-loading').innerHTML = '<span class="loading-pulse">No data or API offline</span>';
     return;
@@ -1157,9 +1495,11 @@ async function searchMemories() {
   const query = document.getElementById('search-input').value.trim();
   if (!query) return;
 
+  const recallBody = { query, top_k: 20 };
+  if (currentAgentId) recallBody.agent_id = currentAgentId;
   const data = await api('/recall', {
     method: 'POST',
-    body: JSON.stringify({ query, top_k: 20 }),
+    body: JSON.stringify(recallBody),
   });
   if (!data) return;
 
@@ -1235,30 +1575,71 @@ async function storeMemory() {
    DREAM ENGINE
    ================================================================= */
 async function loadDreamStatus() {
-  const data = await api('/dream/status');
+  let url = '/dream/status';
+  if (currentAgentId) url += `?agent_id=${encodeURIComponent(currentAgentId)}`;
+  const data = await api(url);
   if (!data) return;
 
   const el = document.getElementById('dream-status');
-  if (!data.phases || data.phases.length === 0) {
+
+  // Normalize to an array of reports
+  let reports = [];
+  if (data.reports) {
+    reports = data.reports;
+  } else if (data.last_report) {
+    reports = [data.last_report];
+  }
+
+  if (reports.length === 0) {
+    // Reset pipeline icons
+    document.querySelectorAll('.dream-phase').forEach(p => {
+      p.classList.remove('ok', 'fail');
+    });
     el.innerHTML = '<div style="color:var(--text-muted);font-size:12px">No dream cycles have run yet. The brain awaits its first slumber.</div>';
     return;
   }
 
-  // Update pipeline phase cards
-  const phases = document.querySelectorAll('.dream-phase');
-  data.phases.forEach((p, i) => {
-    if (phases[i]) {
-      phases[i].classList.toggle('ok', p.success);
-      phases[i].classList.toggle('fail', !p.success);
+  // Update pipeline icons from latest report
+  const latest = reports[reports.length - 1];
+  const pipelinePhases = document.querySelectorAll('.dream-phase');
+  (latest.phases || []).forEach((p, i) => {
+    if (pipelinePhases[i]) {
+      pipelinePhases[i].classList.toggle('ok', p.success);
+      pipelinePhases[i].classList.toggle('fail', !p.success);
     }
   });
 
-  el.innerHTML = `
-    <div class="dream-stat">Duration: <b>${data.total_duration_seconds?.toFixed(1) || '?'}s</b></div>
-    <div class="dream-stat">Episodes consolidated: <b>${data.episodes_consolidated || 0}</b></div>
-    <div class="dream-stat">LLM calls: <b>${data.total_llm_calls || 0}</b></div>
-    <div class="dream-stat">Status: <b style="color:${data.success ? 'var(--green)' : 'var(--magenta)'}">${data.success ? 'SUCCESS' : 'FAILED'}</b></div>
-  `;
+  // Render report cards
+  el.innerHTML = reports.map(r => {
+    const ok = r.success;
+    const agentLabel = r.agent_id || 'System';
+    const phaseGrid = (r.phases || []).map(p => {
+      const pOk = p.success;
+      return `<div class="dream-phase-detail${pOk ? '' : ' fail'}">
+        <div class="phase-title">${escHtml(p.phase)}</div>
+        <div class="phase-stats">
+          Memories: <b>${p.memories_processed}</b>
+          &middot; Links: <b>${p.links_created}+${p.links_strengthened}s</b><br>
+          ${p.procedures_extracted ? `Procs: <b>${p.procedures_extracted}</b> &middot; ` : ''}${p.schemas_extracted ? `Schemas: <b>${p.schemas_extracted}</b> &middot; ` : ''}${p.memories_pruned ? `Pruned: <b>${p.memories_pruned}</b> &middot; ` : ''}LLM: <b>${p.llm_calls}</b>
+          &middot; ${p.duration_seconds?.toFixed(1) || '?'}s
+        </div>
+        ${p.notes ? `<div class="phase-notes">${escHtml(p.notes)}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="dream-report-card${ok ? '' : ' fail'}">
+      <div class="dream-report-header">
+        <span class="agent-badge">${escHtml(agentLabel)}</span>
+        <span style="font-size:11px;color:var(--text-muted)">
+          ${r.total_duration_seconds?.toFixed(1) || '?'}s
+          &middot; ${r.episodes_consolidated || 0} episodes
+          &middot; ${r.total_llm_calls || 0} LLM calls
+        </span>
+        <span class="status-badge ${ok ? 'ok' : 'fail'}">${ok ? 'SUCCESS' : 'FAILED'}</span>
+      </div>
+      <div class="dream-phase-grid">${phaseGrid}</div>
+    </div>`;
+  }).join('');
 }
 
 async function runDream() {
@@ -1331,6 +1712,187 @@ async function loadHealth() {
 }
 
 /* =================================================================
+   AGENT SELECTOR
+   ================================================================= */
+async function loadAgents() {
+  const data = await api('/agents');
+  if (!data) return;
+  const sel = document.getElementById('agent-selector');
+  // Keep "All Agents" option
+  sel.innerHTML = '<option value="">All Agents</option>';
+  (data.agents || []).forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.display_name || a.id;
+    if (a.id === currentAgentId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function onAgentChange() {
+  currentAgentId = document.getElementById('agent-selector').value;
+  // Refresh the currently active panel
+  const active = document.querySelector('.panel.active');
+  if (active) {
+    const id = active.id.replace('panel-', '');
+    if (id === 'cortex') loadDashboard();
+    else if (id === 'graph') loadGraph();
+    else if (id === 'dream') loadDreamStatus();
+    else if (id === 'health') loadHealth();
+  }
+}
+
+/* =================================================================
+   SETTINGS
+   ================================================================= */
+async function loadSettings() {
+  const devCheck = document.getElementById('dev-mode-check');
+  const isDev = devCheck && devCheck.checked;
+  const data = await api('/settings?dev=' + (isDev ? 'true' : 'false'));
+  if (!data) return;
+  populateSettingsForm(data);
+}
+
+function populateSettingsForm(s) {
+  const llm = s.llm || {};
+  const dream = s.dream || {};
+  const keys = s.llm_keys || {};
+  const scoring = s.scoring || {};
+  const adv = s.advanced || {};
+
+  // LLM
+  setVal('set-llm-primary-provider', llm.primary_provider);
+  setVal('set-llm-primary-model', llm.primary_model);
+  setVal('set-llm-fallback-provider', llm.fallback_provider);
+  setVal('set-llm-fallback-model', llm.fallback_model);
+  setVal('set-llm-base-url', llm.openai_compat_base_url);
+  setVal('set-llm-temperature', llm.temperature);
+  setVal('set-llm-max-tokens', llm.max_tokens);
+  setVal('set-llm-strip-think', String(llm.strip_think ?? true));
+  setVal('set-llm-no-think', String(llm.no_think ?? true));
+
+  // Keys
+  setVal('set-api-key', keys.anthropic_api_key || '');
+
+  // Dream
+  setVal('set-dream-max-llm', dream.max_llm_calls);
+  setVal('set-dream-budget-pattern', dream.budget_pattern);
+  setVal('set-dream-budget-schema', dream.budget_schema);
+  setVal('set-dream-budget-rem', dream.budget_rem);
+  setVal('set-dream-cluster-threshold', dream.cluster_threshold);
+  setVal('set-dream-rem-pair-checks', dream.rem_pair_checks);
+
+  // Dev / scoring
+  setVal('set-score-vector', scoring.weight_vector);
+  setVal('set-score-activation', scoring.weight_activation);
+  setVal('set-score-retrievability', scoring.weight_retrievability);
+  setVal('set-score-salience', scoring.weight_salience);
+
+  // Dev / advanced
+  setVal('set-actr-decay', adv.actr_decay_rate);
+  setVal('set-actr-noise', adv.actr_noise);
+  setVal('set-spread-hops', adv.spreading_max_hops);
+  setVal('set-spread-decay', adv.spreading_decay_per_hop);
+  setVal('set-fsrs-stability', adv.fsrs_initial_stability);
+  setVal('set-fsrs-difficulty', adv.fsrs_initial_difficulty);
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el && val !== undefined && val !== null) el.value = val;
+}
+
+function getVal(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : undefined;
+}
+
+async function saveSettings() {
+  const body = {
+    llm: {
+      primary_provider: getVal('set-llm-primary-provider'),
+      primary_model: getVal('set-llm-primary-model'),
+      fallback_provider: getVal('set-llm-fallback-provider'),
+      fallback_model: getVal('set-llm-fallback-model'),
+      openai_compat_base_url: getVal('set-llm-base-url'),
+      temperature: parseFloat(getVal('set-llm-temperature')),
+      max_tokens: parseInt(getVal('set-llm-max-tokens')),
+      strip_think: getVal('set-llm-strip-think') === 'true',
+      no_think: getVal('set-llm-no-think') === 'true',
+    },
+    dream: {
+      max_llm_calls: parseInt(getVal('set-dream-max-llm')),
+      budget_pattern: parseInt(getVal('set-dream-budget-pattern')),
+      budget_schema: parseInt(getVal('set-dream-budget-schema')),
+      budget_rem: parseInt(getVal('set-dream-budget-rem')),
+      cluster_threshold: parseFloat(getVal('set-dream-cluster-threshold')),
+      rem_pair_checks: parseInt(getVal('set-dream-rem-pair-checks')),
+    },
+  };
+
+  // API key (only send if user actually changed it)
+  const keyVal = getVal('set-api-key');
+  if (keyVal && !keyVal.startsWith('***')) {
+    body.llm_keys = { anthropic_api_key: keyVal };
+  }
+
+  // Dev settings
+  const devCheck = document.getElementById('dev-mode-check');
+  if (devCheck && devCheck.checked) {
+    body.scoring = {
+      weight_vector: parseFloat(getVal('set-score-vector')),
+      weight_activation: parseFloat(getVal('set-score-activation')),
+      weight_retrievability: parseFloat(getVal('set-score-retrievability')),
+      weight_salience: parseFloat(getVal('set-score-salience')),
+    };
+    body.advanced = {
+      actr_decay_rate: parseFloat(getVal('set-actr-decay')),
+      actr_noise: parseFloat(getVal('set-actr-noise')),
+      spreading_max_hops: parseInt(getVal('set-spread-hops')),
+      spreading_decay_per_hop: parseFloat(getVal('set-spread-decay')),
+      fsrs_initial_stability: parseFloat(getVal('set-fsrs-stability')),
+      fsrs_initial_difficulty: parseFloat(getVal('set-fsrs-difficulty')),
+    };
+  }
+
+  const data = await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
+  const el = document.getElementById('settings-result');
+  if (data) {
+    el.innerHTML = `<span style="color:var(--green)">${data.count} settings applied</span>`;
+    toast('Settings saved');
+  } else {
+    el.innerHTML = '<span style="color:var(--magenta)">Save failed</span>';
+  }
+}
+
+async function resetSettings() {
+  const data = await api('/settings/reset', { method: 'POST' });
+  if (data && data.reset) {
+    toast('Settings reset to defaults');
+    loadSettings();
+    document.getElementById('settings-result').innerHTML =
+      '<span style="color:var(--cyan)">Reset to defaults</span>';
+  }
+}
+
+function toggleDevSettings() {
+  const check = document.getElementById('dev-mode-check');
+  check.checked = !check.checked;
+  document.getElementById('settings-dev').classList.toggle('visible', check.checked);
+  if (check.checked) loadSettings(); // Re-fetch with dev=true
+}
+
+function togglePassword() {
+  const inp = document.getElementById('set-api-key');
+  const btn = inp.nextElementSibling;
+  if (inp.type === 'password') {
+    inp.type = 'text'; btn.textContent = 'Hide';
+  } else {
+    inp.type = 'password'; btn.textContent = 'Show';
+  }
+}
+
+/* =================================================================
    UTILITIES
    ================================================================= */
 function escHtml(s) {
@@ -1363,7 +1925,8 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   document.getElementById('render-mode-btn').textContent = renderMode.toUpperCase();
 
-  // Load dashboard
+  // Load agents and dashboard
+  loadAgents();
   loadDashboard();
 });
 </script>

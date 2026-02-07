@@ -110,6 +110,9 @@ LAYER_CONFIG = {
 # Dream Engine
 # =============================================================================
 DREAM_MAX_LLM_CALLS = 20
+DREAM_LLM_BUDGET_PATTERN = 12   # Reserve for pattern extraction
+DREAM_LLM_BUDGET_SCHEMA = 4    # Reserve for schema formation
+DREAM_LLM_BUDGET_REM = 4       # Reserve for REM recombination
 DREAM_CLUSTER_SIMILARITY_THRESHOLD = 0.80
 DREAM_CLUSTER_MIN_SIZE = 3
 DREAM_PRUNING_MIN_AGE_HOURS = 48
@@ -119,15 +122,17 @@ DREAM_REM_PAIR_CHECKS = 10
 DREAM_REM_MIN_CONNECTION_STRENGTH = 0.4
 
 # LLM configuration
-LLM_PRIMARY_PROVIDER = "anthropic"  # "anthropic", "ollama", "openai_compat"
-LLM_PRIMARY_MODEL = "claude-sonnet-4-5-20250929"
-LLM_FALLBACK_PROVIDER = "openai_compat"  # LM Studio / vLLM / LocalAI
-LLM_FALLBACK_MODEL = "qwen/qwen3-vl-8b"
+LLM_PRIMARY_PROVIDER = "openai_compat"  # "anthropic", "ollama", "openai_compat"
+LLM_PRIMARY_MODEL = "qwen/qwen3-8b"
+LLM_FALLBACK_PROVIDER = "anthropic"  # Claude API fallback
+LLM_FALLBACK_MODEL = "claude-sonnet-4-5-20250929"
 LLM_TEMPERATURE = 0.7
 LLM_MAX_TOKENS = 1024
 
 # OpenAI-compatible API (LM Studio, vLLM, LocalAI, etc.)
 OPENAI_COMPAT_BASE_URL = "http://192.168.0.107:1234"
+OPENAI_COMPAT_STRIP_THINK = True  # Strip <think>...</think> from responses (Qwen3, etc.)
+OPENAI_COMPAT_NO_THINK = True  # Append /no_think to system prompts (disables CoT for Qwen3)
 
 # =============================================================================
 # Server

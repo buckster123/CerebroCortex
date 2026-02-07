@@ -19,6 +19,8 @@ from typing import Optional, Protocol
 
 import requests
 
+import re
+
 from cerebro.config import (
     LLM_FALLBACK_MODEL,
     LLM_FALLBACK_PROVIDER,
@@ -27,6 +29,8 @@ from cerebro.config import (
     LLM_PRIMARY_PROVIDER,
     LLM_TEMPERATURE,
     OPENAI_COMPAT_BASE_URL,
+    OPENAI_COMPAT_STRIP_THINK,
+    OPENAI_COMPAT_NO_THINK,
     OLLAMA_BASE_URL,
 )
 
@@ -169,6 +173,8 @@ class OllamaProvider:
 class OpenAICompatProvider:
     """OpenAI-compatible API provider (LM Studio, vLLM, LocalAI, etc.)."""
 
+    _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
     def __init__(
         self,
         model: str = LLM_FALLBACK_MODEL,
@@ -186,9 +192,14 @@ class OpenAICompatProvider:
     ) -> LLMResponse:
         url = f"{self.base_url}/v1/chat/completions"
 
+        # Inject /no_think for models that support it (Qwen3, etc.)
+        sys_content = system or ""
+        if OPENAI_COMPAT_NO_THINK:
+            sys_content = f"{sys_content} /no_think".strip()
+
         messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
+        if sys_content:
+            messages.append({"role": "system", "content": sys_content})
         messages.append({"role": "user", "content": prompt})
 
         payload = {
@@ -204,6 +215,11 @@ class OpenAICompatProvider:
         data = resp.json()
 
         text = data["choices"][0]["message"]["content"]
+
+        # Strip <think>...</think> blocks from response
+        if OPENAI_COMPAT_STRIP_THINK:
+            text = self._THINK_RE.sub("", text).strip()
+
         tokens = data.get("usage", {})
         total_tokens = tokens.get("total_tokens", 0)
 

@@ -605,30 +605,65 @@ class GraphStore:
     # Stats
     # =========================================================================
 
-    def stats(self) -> dict:
-        """Get comprehensive graph statistics."""
-        node_count = self.count_nodes()
+    def stats(self, agent_id: Optional[str] = None) -> dict:
+        """Get comprehensive graph statistics.
+
+        Args:
+            agent_id: If provided, scope counts to this agent's visible
+                      memories (SHARED + own PRIVATE/THREAD).
+        """
+        if agent_id:
+            scope = (
+                "WHERE visibility='shared' "
+                "OR (visibility='private' AND agent_id=?) "
+                "OR (visibility='thread' AND agent_id=?)"
+            )
+            params = (agent_id, agent_id)
+            node_count = self.conn.execute(
+                f"SELECT COUNT(*) as c FROM memory_nodes {scope}", params
+            ).fetchone()["c"]
+
+            type_counts = {}
+            for row in self.conn.execute(
+                f"SELECT memory_type, COUNT(*) as c FROM memory_nodes {scope} GROUP BY memory_type",
+                params,
+            ).fetchall():
+                type_counts[row["memory_type"]] = row["c"]
+
+            layer_counts = {}
+            for row in self.conn.execute(
+                f"SELECT layer, COUNT(*) as c FROM memory_nodes {scope} GROUP BY layer",
+                params,
+            ).fetchall():
+                layer_counts[row["layer"]] = row["c"]
+
+            episode_count = self.conn.execute(
+                "SELECT COUNT(*) as c FROM episodes WHERE agent_id = ?", (agent_id,)
+            ).fetchone()["c"]
+        else:
+            node_count = self.count_nodes()
+
+            type_counts = {}
+            for row in self.conn.execute(
+                "SELECT memory_type, COUNT(*) as c FROM memory_nodes GROUP BY memory_type"
+            ).fetchall():
+                type_counts[row["memory_type"]] = row["c"]
+
+            layer_counts = {}
+            for row in self.conn.execute(
+                "SELECT layer, COUNT(*) as c FROM memory_nodes GROUP BY layer"
+            ).fetchall():
+                layer_counts[row["layer"]] = row["c"]
+
+            episode_count = self.conn.execute("SELECT COUNT(*) as c FROM episodes").fetchone()["c"]
+
         link_count = self.count_links()
-
-        type_counts = {}
-        for row in self.conn.execute(
-            "SELECT memory_type, COUNT(*) as c FROM memory_nodes GROUP BY memory_type"
-        ).fetchall():
-            type_counts[row["memory_type"]] = row["c"]
-
-        layer_counts = {}
-        for row in self.conn.execute(
-            "SELECT layer, COUNT(*) as c FROM memory_nodes GROUP BY layer"
-        ).fetchall():
-            layer_counts[row["layer"]] = row["c"]
 
         link_type_counts = {}
         for row in self.conn.execute(
             "SELECT link_type, COUNT(*) as c FROM associative_links GROUP BY link_type"
         ).fetchall():
             link_type_counts[row["link_type"]] = row["c"]
-
-        episode_count = self.conn.execute("SELECT COUNT(*) as c FROM episodes").fetchone()["c"]
 
         return {
             "nodes": node_count,

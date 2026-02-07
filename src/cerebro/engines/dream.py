@@ -29,6 +29,9 @@ from typing import Optional
 from cerebro.config import (
     DREAM_CLUSTER_MIN_SIZE,
     DREAM_CLUSTER_SIMILARITY_THRESHOLD,
+    DREAM_LLM_BUDGET_PATTERN,
+    DREAM_LLM_BUDGET_REM,
+    DREAM_LLM_BUDGET_SCHEMA,
     DREAM_MAX_LLM_CALLS,
     DREAM_PRUNING_MAX_SALIENCE,
     DREAM_PRUNING_MIN_AGE_HOURS,
@@ -174,6 +177,7 @@ class DreamEngine:
         self._running = False
         self._agent_id: Optional[str] = None
         self._last_report: Optional[DreamReport] = None
+        self._last_reports: list[DreamReport] = []
 
     @property
     def is_running(self) -> bool:
@@ -182,6 +186,11 @@ class DreamEngine:
     @property
     def last_report(self) -> Optional[DreamReport]:
         return self._last_report
+
+    @property
+    def last_reports(self) -> list[DreamReport]:
+        """All reports from the most recent run_all_agents_cycle() call."""
+        return self._last_reports
 
     # =========================================================================
     # Main cycle
@@ -280,6 +289,7 @@ class DreamEngine:
         reports = []
         for aid in agent_ids:
             reports.append(self.run_cycle(agent_id=aid))
+        self._last_reports = reports
         return reports
 
     # =========================================================================
@@ -370,9 +380,10 @@ class DreamEngine:
                 return report
 
             total_procedures = 0
+            phase_budget = min(DREAM_LLM_BUDGET_PATTERN, self._llm_calls_remaining)
 
             for concept, mem_ids in clusters.items():
-                if self._llm_calls_remaining <= 0:
+                if phase_budget <= 0 or self._llm_calls_remaining <= 0:
                     break
 
                 # Gather memory contents
@@ -384,15 +395,20 @@ class DreamEngine:
                 patterns, called = self._llm_extract_patterns(memories_text)
                 if called:
                     report.llm_calls += 1
+                    phase_budget -= 1
                 report.memories_processed += len(mem_ids)
 
                 # Store extracted procedures
                 for pattern in patterns:
+                    content = pattern.get("content") or pattern.get("pattern") or pattern.get("procedure")
+                    if not content:
+                        continue
+
                     source_indices = pattern.get("source_indices", [])
                     source_ids = [mem_ids[i] for i in source_indices if i < len(mem_ids)]
 
                     proc = self._cortex.procedural.store_procedure(
-                        content=pattern["content"],
+                        content=content,
                         tags=pattern.get("tags", [concept]),
                         derived_from=source_ids or mem_ids[:3],
                         agent_id=self._agent_id or "CLAUDE",
@@ -429,9 +445,10 @@ class DreamEngine:
         try:
             episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
             total_schemas = 0
+            phase_budget = min(DREAM_LLM_BUDGET_SCHEMA, self._llm_calls_remaining)
 
             for ep in episodes:
-                if self._llm_calls_remaining <= 0:
+                if phase_budget <= 0 or self._llm_calls_remaining <= 0:
                     break
 
                 mem_ids = self._cortex.episodes.get_episode_memories(ep.id)
@@ -458,6 +475,7 @@ class DreamEngine:
                 schema_data, called = self._llm_form_schema(memories_text)
                 if called:
                     report.llm_calls += 1
+                    phase_budget -= 1
 
                 if schema_data and schema_data.get("content"):
                     episode_tags = list(set(
@@ -644,8 +662,10 @@ class DreamEngine:
             links_created = 0
             node_list = list(sample_nodes.items())
 
+            phase_budget = min(DREAM_LLM_BUDGET_REM, self._llm_calls_remaining)
+
             for _ in range(min(DREAM_REM_PAIR_CHECKS, len(node_list) * (len(node_list) - 1) // 2)):
-                if self._llm_calls_remaining <= 0:
+                if phase_budget <= 0 or self._llm_calls_remaining <= 0:
                     break
                 if len(node_list) < 2:
                     break
@@ -668,6 +688,7 @@ class DreamEngine:
                 connection, called = self._llm_rem_connect(node_a.content, node_b.content)
                 if called:
                     report.llm_calls += 1
+                    phase_budget -= 1
                 pairs_checked += 1
 
                 if connection and connection.get("connected"):
@@ -727,21 +748,38 @@ class DreamEngine:
             return None, True  # Was called, but failed
 
     def _parse_json(self, text: Optional[str]) -> Optional[any]:
-        """Parse JSON from LLM response, handling markdown fences."""
+        """Parse JSON from LLM response, handling markdown fences and preamble text."""
         if not text:
             return None
-        # Strip markdown code fences
         cleaned = text.strip()
-        if cleaned.startswith("```"):
+
+        # Strip markdown code fences
+        if "```" in cleaned:
             lines = cleaned.split("\n")
-            # Remove first and last fence lines
             lines = [l for l in lines if not l.strip().startswith("```")]
-            cleaned = "\n".join(lines)
+            cleaned = "\n".join(lines).strip()
+
+        # Try direct parse first
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            logger.warning(f"Failed to parse LLM JSON: {cleaned[:100]}...")
-            return None
+            pass
+
+        # Find JSON object or array in mixed text
+        for start_char, end_char in [("{", "}"), ("[", "]")]:
+            start = cleaned.find(start_char)
+            if start == -1:
+                continue
+            end = cleaned.rfind(end_char)
+            if end <= start:
+                continue
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                continue
+
+        logger.warning(f"Failed to parse LLM JSON: {cleaned[:100]}...")
+        return None
 
     def _llm_extract_patterns(self, memories_text: str) -> tuple[list[dict], bool]:
         """Ask LLM to extract patterns from memory cluster.

@@ -76,6 +76,12 @@ from cerebro.config import (
 )
 from cerebro.cortex import CerebroCortex
 from cerebro.models.agent import AgentProfile
+from cerebro.settings import (
+    apply_settings,
+    get_current_settings,
+    load_on_startup,
+    reset_settings,
+)
 from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
 
 logging.basicConfig(
@@ -118,6 +124,16 @@ def get_cortex() -> CerebroCortex:
         _cortex.initialize()
         logger.info("CerebroCortex initialized")
     return _cortex
+
+
+@app.on_event("startup")
+async def startup_load_settings():
+    """Load persisted settings overrides on server start."""
+    try:
+        load_on_startup()
+        logger.info("Settings loaded from disk")
+    except Exception as e:
+        logger.warning(f"Failed to load settings on startup: {e}")
 
 
 # =============================================================================
@@ -208,6 +224,13 @@ class StoreProcedureRequest(BaseModel):
 class ProcedureOutcomeRequest(BaseModel):
     success: bool
 
+class SettingsUpdateRequest(BaseModel):
+    llm: Optional[dict] = None
+    llm_keys: Optional[dict] = None
+    dream: Optional[dict] = None
+    scoring: Optional[dict] = None
+    advanced: Optional[dict] = None
+
 
 # =============================================================================
 # Info & health
@@ -259,10 +282,10 @@ async def health():
 
 
 @app.get("/stats")
-async def stats():
-    """Full system statistics."""
+async def stats(agent_id: Optional[str] = None):
+    """Full system statistics, optionally scoped to an agent."""
     ctx = get_cortex()
-    return ctx.stats()
+    return ctx.stats(agent_id=agent_id)
 
 
 @app.get("/ui")
@@ -792,19 +815,32 @@ async def graph_stats():
 async def graph_data(
     limit: int = Query(200, ge=1, le=2000),
     min_salience: float = Query(0.0, ge=0.0, le=1.0),
+    agent_id: Optional[str] = None,
 ):
     """Get graph data (nodes + links) for visualization."""
     ctx = get_cortex()
 
     # Get nodes from SQLite, ordered by salience descending
-    rows = ctx.graph.conn.execute(
-        "SELECT id, content, memory_type, layer, salience, valence, "
-        "arousal, tags_json, concepts_json, agent_id, access_count, "
-        "created_at FROM memory_nodes "
-        "WHERE salience >= ? "
-        "ORDER BY salience DESC LIMIT ?",
-        (min_salience, limit),
-    ).fetchall()
+    if agent_id:
+        rows = ctx.graph.conn.execute(
+            "SELECT id, content, memory_type, layer, salience, valence, "
+            "arousal, tags_json, concepts_json, agent_id, access_count, "
+            "created_at FROM memory_nodes "
+            "WHERE salience >= ? "
+            "AND (visibility='shared' OR (visibility='private' AND agent_id=?) "
+            "OR (visibility='thread' AND agent_id=?)) "
+            "ORDER BY salience DESC LIMIT ?",
+            (min_salience, agent_id, agent_id, limit),
+        ).fetchall()
+    else:
+        rows = ctx.graph.conn.execute(
+            "SELECT id, content, memory_type, layer, salience, valence, "
+            "arousal, tags_json, concepts_json, agent_id, access_count, "
+            "created_at FROM memory_nodes "
+            "WHERE salience >= ? "
+            "ORDER BY salience DESC LIMIT ?",
+            (min_salience, limit),
+        ).fetchall()
 
     node_ids = set()
     nodes = []
@@ -1226,14 +1262,33 @@ async def dream_run():
 
 
 @app.get("/dream/status")
-async def dream_status():
-    """Get dream engine status and last report."""
+async def dream_status(agent_id: Optional[str] = None):
+    """Get dream engine status and last report(s).
+
+    If agent_id is provided, returns the report for that specific agent.
+    Otherwise returns all reports from the last cycle.
+    """
     ctx = get_cortex()
     dream = _get_dream_engine(ctx)
 
     if dream.is_running:
         return {"status": "running"}
 
+    reports = dream.last_reports
+    if agent_id and reports:
+        # Find report for specific agent
+        match = next((r for r in reports if r.agent_id == agent_id), None)
+        if match:
+            return {"status": "idle", "last_report": match.to_dict()}
+        return {"status": "idle", "last_report": None}
+
+    if reports:
+        return {
+            "status": "idle",
+            "reports": [r.to_dict() for r in reports],
+        }
+
+    # Fallback to single last_report (for single-agent cycles)
     if dream.last_report is None:
         return {"status": "idle", "last_report": None}
 
@@ -1241,6 +1296,47 @@ async def dream_status():
         "status": "idle",
         "last_report": dream.last_report.to_dict(),
     }
+
+
+# =============================================================================
+# Settings
+# =============================================================================
+
+@app.get("/settings")
+async def get_settings(dev: bool = False):
+    """Get current settings (masks API keys)."""
+    return get_current_settings(include_dev=dev)
+
+
+@app.put("/settings")
+async def update_settings(req: SettingsUpdateRequest):
+    """Partial update of settings. Persists to settings.json and hot-reloads."""
+    global _dream_engine
+    updates = {}
+    for section in ("llm", "llm_keys", "dream", "scoring", "advanced"):
+        val = getattr(req, section, None)
+        if val is not None:
+            updates[section] = val
+
+    if not updates:
+        raise HTTPException(400, "No settings provided")
+
+    applied = apply_settings(updates)
+
+    # Reset dream engine if LLM config changed so it picks up new settings
+    if any(k.startswith("llm.") for k in applied):
+        _dream_engine = None
+
+    return {"applied": applied, "count": len(applied)}
+
+
+@app.post("/settings/reset")
+async def reset_all_settings():
+    """Reset all settings to config.py defaults."""
+    global _dream_engine
+    reset_settings()
+    _dream_engine = None
+    return {"reset": True}
 
 
 # =============================================================================

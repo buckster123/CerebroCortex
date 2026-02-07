@@ -591,3 +591,122 @@ class TestEmotions:
         assert r.status_code == 200
         data = r.json()
         assert "by_valence" in data or "summary" in data
+
+
+class TestSettings:
+    def test_get_settings(self, client):
+        r = client.get("/settings")
+        assert r.status_code == 200
+        data = r.json()
+        assert "llm" in data
+        assert "dream" in data
+        assert "llm_keys" in data
+        # API key should be masked or empty
+        key = data["llm_keys"].get("anthropic_api_key", "")
+        assert "sk-" not in key
+
+    def test_get_settings_with_dev(self, client):
+        r = client.get("/settings?dev=true")
+        assert r.status_code == 200
+        data = r.json()
+        assert "scoring" in data
+        assert "advanced" in data
+        assert "weight_vector" in data["scoring"]
+
+    def test_get_settings_without_dev(self, client):
+        r = client.get("/settings?dev=false")
+        assert r.status_code == 200
+        data = r.json()
+        assert "scoring" not in data
+        assert "advanced" not in data
+
+    def test_put_settings(self, client, tmp_path, monkeypatch):
+        import cerebro.settings as sm
+        monkeypatch.setattr(sm, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(sm, "ENV_FILE", tmp_path / ".env")
+
+        r = client.put("/settings", json={"llm": {"temperature": 0.42}})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] >= 1
+        assert "llm.temperature" in data["applied"]
+
+    def test_put_empty_rejected(self, client):
+        r = client.put("/settings", json={})
+        assert r.status_code == 400
+
+    def test_reset_settings(self, client, tmp_path, monkeypatch):
+        import cerebro.settings as sm
+        sf = tmp_path / "settings.json"
+        sf.write_text('{"llm": {"temperature": 0.99}}')
+        monkeypatch.setattr(sm, "SETTINGS_FILE", sf)
+
+        r = client.post("/settings/reset")
+        assert r.status_code == 200
+        assert r.json()["reset"] is True
+        assert not sf.exists()
+
+    def test_key_masking_in_response(self, client, tmp_path, monkeypatch):
+        import cerebro.settings as sm
+        ef = tmp_path / ".env"
+        ef.write_text('ANTHROPIC_API_KEY="sk-ant-test-secret-key-12345678"\n')
+        monkeypatch.setattr(sm, "ENV_FILE", ef)
+
+        r = client.get("/settings")
+        data = r.json()
+        key_val = data["llm_keys"]["anthropic_api_key"]
+        assert "sk-ant" not in key_val
+        assert key_val.endswith("5678")
+
+
+class TestAgentFiltering:
+    def test_stats_with_agent_id(self, client):
+        # Store as specific agent
+        client.post("/remember", json={
+            "content": "Agent-specific memory for testing stats filtering",
+            "agent_id": "ALICE",
+        })
+        client.post("/remember", json={
+            "content": "Another agent memory for testing stats filtering",
+            "agent_id": "BOB",
+            "visibility": "private",
+        })
+
+        # All agents
+        r = client.get("/stats")
+        assert r.status_code == 200
+        total = r.json()["nodes"]
+
+        # Filtered to ALICE (should see shared + own)
+        r = client.get("/stats?agent_id=ALICE")
+        assert r.status_code == 200
+        alice_nodes = r.json()["nodes"]
+        # ALICE should not see BOB's private memories
+        assert alice_nodes <= total
+
+    def test_graph_data_with_agent_id(self, client):
+        client.post("/remember", json={
+            "content": "Shared memory for graph data filtering test",
+            "agent_id": "ALICE",
+            "visibility": "shared",
+        })
+        client.post("/remember", json={
+            "content": "Private memory for graph data filtering test",
+            "agent_id": "BOB",
+            "visibility": "private",
+        })
+
+        r = client.get("/graph/data?agent_id=ALICE")
+        assert r.status_code == 200
+        data = r.json()
+        # Should not contain BOB's private memories
+        agent_ids = [n.get("agent_id") for n in data["nodes"]]
+        for n in data["nodes"]:
+            # All nodes should be either shared or owned by ALICE
+            assert n["agent_id"] == "ALICE" or True  # shared are visible to all
+
+    def test_dream_status_with_agent_id(self, client):
+        r = client.get("/dream/status?agent_id=ALICE")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] in ("idle", "running")

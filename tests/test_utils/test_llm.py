@@ -2,6 +2,7 @@
 
 import pytest
 
+from cerebro.config import LLM_PRIMARY_PROVIDER, LLM_FALLBACK_PROVIDER
 from cerebro.utils.llm import (
     LLMClient,
     LLMResponse,
@@ -26,8 +27,8 @@ class TestLLMResponse:
 class TestLLMClientInit:
     def test_default_init(self):
         client = LLMClient()
-        assert client.primary_name == "anthropic"
-        assert client.fallback_name in ("ollama", "openai_compat")
+        assert client.primary_name == LLM_PRIMARY_PROVIDER
+        assert client.fallback_name == LLM_FALLBACK_PROVIDER
         assert client.total_calls == 0
 
     def test_explicit_provider(self):
@@ -46,8 +47,8 @@ class TestLLMClientInit:
         client = LLMClient()
         s = client.stats()
         assert s["total_calls"] == 0
-        assert s["primary"] == "anthropic"
-        assert s["fallback"] in ("ollama", "openai_compat")
+        assert s["primary"] == LLM_PRIMARY_PROVIDER
+        assert s["fallback"] == LLM_FALLBACK_PROVIDER
 
 
 class TestLLMClientFailover:

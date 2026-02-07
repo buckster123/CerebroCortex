@@ -815,9 +815,13 @@ class CerebroCortex:
     # Stats
     # =========================================================================
 
-    def stats(self) -> dict:
-        """Get comprehensive system statistics."""
-        graph_stats = self._graph.stats()
+    def stats(self, agent_id: Optional[str] = None) -> dict:
+        """Get comprehensive system statistics.
+
+        Args:
+            agent_id: If provided, scope counts to this agent's visible memories.
+        """
+        graph_stats = self._graph.stats(agent_id=agent_id)
         return {
             **graph_stats,
             "vector_store": self._chroma.count_all() if self._chroma else {},
