@@ -8,7 +8,7 @@
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-506_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="506 Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-532_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="532 Tests"/></a>
   <a href="#brain-regions"><img src="https://img.shields.io/badge/brain_regions-9-ff0055?style=for-the-badge" alt="9 Brain Regions"/></a>
   <a href="#memory-types"><img src="https://img.shields.io/badge/memory_types-6-00d4ff?style=for-the-badge" alt="6 Memory Types"/></a>
   <a href="#dream-engine"><img src="https://img.shields.io/badge/dream_engine-6_phases-9d4edd?style=for-the-badge" alt="Dream Engine"/></a>
@@ -21,6 +21,7 @@
   <a href="#multi-agent-memory">Multi-Agent</a> &bull;
   <a href="#dream-engine">Dream Engine</a> &bull;
   <a href="#interfaces">Interfaces</a> &bull;
+  <a href="#agent-framework-integration">Integration</a> &bull;
   <a href="#dashboard">Dashboard</a>
 </p>
 
@@ -57,7 +58,7 @@ Real memory is:
 ```mermaid
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
-        MCP["MCP Server<br/><small>39 tools</small>"]
+        MCP["MCP Server<br/><small>40 tools</small>"]
         API["REST API<br/><small>30+ endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
         DASH["Dashboard<br/><small>Cyberpunk UI</small>"]
@@ -122,13 +123,13 @@ cd CerebroCore
 pip install -e ".[all]"
 ```
 
-### Run as MCP Server (for Claude)
+### Run as MCP Server (for Claude, OpenClaw, or any MCP client)
 
 ```bash
 ./cerebro-mcp
 ```
 
-Add to your Claude config (`~/.claude.json`):
+Add to your Claude config (`~/.claude.json`) or OpenClaw MCP config:
 
 ```json
 {
@@ -138,6 +139,12 @@ Add to your Claude config (`~/.claude.json`):
     }
   }
 }
+```
+
+Optionally set an agent identity via environment variable:
+
+```bash
+CEREBRO_AGENT_ID=my-agent ./cerebro-mcp
 ```
 
 ### Run as REST API
@@ -641,10 +648,11 @@ dream_run(max_llm_calls=20)
 ```
 
 **LLM Configuration:**
-- Primary: **Claude** (Anthropic API)
-- Fallback: **Ollama** / **OpenAI-compatible** (local LM Studio, etc.)
+- Primary: **OpenAI-compatible** (LM Studio, vLLM, or any local endpoint)
+- Fallback: **Claude** (Anthropic API)
 - Max LLM calls per cycle per agent: 20
 - Temperature: 0.7
+- Configurable at runtime via `data/settings.json`
 
 ---
 
@@ -695,60 +703,66 @@ graph LR
 
 CerebroCortex exposes three interfaces — use whichever fits your workflow:
 
-### MCP Server (39 Tools)
+### MCP Server (40 Tools)
 
-The native interface for Claude. Drop-in replacement for simpler memory systems.
+The native interface for Claude, OpenClaw, and any MCP-compatible agent. All tool descriptions are written in plain English so agents can pick tools by description alone — no jargon.
 
 ```bash
 ./cerebro-mcp
 ```
 
 <details>
-<summary><strong>Full MCP Tool List (39 tools)</strong></summary>
+<summary><strong>Full MCP Tool List (40 tools)</strong></summary>
 
 | Tool | Description |
 |---|---|
 | **Core Memory** | |
-| `remember` | Store memory through full encoding pipeline |
-| `recall` | Search with spreading activation + ACT-R/FSRS scoring |
-| `get_memory` | Retrieve a single memory by ID |
-| `update_memory` | Update content, tags, salience, or visibility |
-| `delete_memory` | Delete a memory |
-| `share_memory` | Change memory visibility (owner only) |
-| `associate` | Create typed link between memories |
+| `remember` | Save information to long-term memory |
+| `recall` | Search memories by meaning, ranked by relevance, importance, and recency |
+| `get_memory` | Get a single memory by ID with all metadata |
+| `update_memory` | Update content, tags, importance, or visibility |
+| `delete_memory` | Permanently delete a memory |
+| `share_memory` | Change who can see a memory (owner only) |
+| `associate` | Create a link between two memories (improves search) |
 | **Episodes** | |
-| `episode_start` | Begin episode recording |
-| `episode_add_step` | Add memory as episode step |
-| `episode_end` | End episode with summary |
+| `episode_start` | Start recording a sequence of related events |
+| `episode_add_step` | Add a memory as the next step in an episode |
+| `episode_end` | Finish recording an episode |
 | `list_episodes` | List recent episodes |
 | `get_episode` | Get episode details (scope-checked) |
-| `get_episode_memories` | Get episode memories (scope-checked) |
+| `get_episode_memories` | Get all memories in an episode, in order |
 | **Sessions** | |
-| `session_save` | Save session continuity note |
-| `session_recall` | Retrieve previous session notes |
+| `session_save` | Save a session summary for future continuity |
+| `session_recall` | Retrieve notes from previous sessions |
 | **Agents** | |
-| `register_agent` | Register new agent profile |
+| `register_agent` | Register a new agent in the memory system |
 | `list_agents` | List all registered agents |
 | **Intentions** | |
-| `store_intention` | Create prospective memory (TODO) |
-| `list_intentions` | List pending intentions |
-| `resolve_intention` | Mark intention as resolved |
+| `store_intention` | Save a TODO or reminder for future action |
+| `list_intentions` | List pending TODOs and reminders |
+| `resolve_intention` | Mark a TODO as done |
 | **Schemas & Procedures** | |
-| `create_schema` | Create schematic memory |
-| `list_schemas` | List schemas (scope-filtered) |
-| `store_procedure` | Store procedural memory |
-| `list_procedures` | List procedures (scope-filtered) |
+| `create_schema` | Create a general pattern or principle from multiple memories |
+| `list_schemas` | List stored patterns and principles |
+| `find_matching_schemas` | Find patterns matching tags or concepts |
+| `get_schema_sources` | Get original memories a pattern was derived from |
+| `store_procedure` | Store a workflow, strategy, or how-to guide |
+| `list_procedures` | List stored workflows and how-to guides |
+| `find_relevant_procedures` | Find workflows matching tags or concepts |
+| `record_procedure_outcome` | Record whether a procedure worked or failed |
+| **File Ingestion** | |
+| `ingest_file` | Read a file and store its contents as searchable memories |
 | **Graph Exploration** | |
-| `memory_neighbors` | Get neighbors of a memory |
-| `find_path` | Shortest path between two memories |
-| `common_neighbors` | Memories connected to both A and B |
+| `memory_neighbors` | Get memories directly linked to a given memory |
+| `find_path` | Find the shortest chain of links between two memories |
+| `common_neighbors` | Find memories linked to both A and B |
 | **System** | |
-| `cortex_stats` | Comprehensive system statistics |
+| `cortex_stats` | Comprehensive system statistics (raw JSON) |
 | `memory_health` | Memory system health report |
-| `memory_graph_stats` | Detailed graph statistics |
-| `emotions` | Emotional summary across memories |
-| `dream_run` | Run Dream Engine (per-agent cycles) |
-| `dream_status` | Get last dream report |
+| `memory_graph_stats` | Detailed graph structure metrics |
+| `emotional_summary` | Breakdown of memories by emotional tone |
+| `dream_run` | Run offline memory maintenance cycle |
+| `dream_status` | Get status of last maintenance cycle |
 | **Compatibility** | |
 | `memory_store` | Alias for `remember` |
 | `memory_search` | Alias for `recall` |
@@ -856,6 +870,51 @@ cerebro import markdown knowledge.md
 
 ---
 
+## Agent Framework Integration
+
+CerebroCortex works as a **drop-in memory upgrade** for any AI agent framework that supports MCP. No protocol changes needed — the MCP server speaks standard JSON-RPC 2.0 over stdio.
+
+### OpenClaw / Other Frameworks
+
+1. Point your framework's MCP adapter at `./cerebro-mcp`
+2. All 40 tools are auto-discovered with plain-English descriptions
+3. Set `CEREBRO_AGENT_ID` to identify your agent
+
+See **[INTEGRATE.md](INTEGRATE.md)** for detailed setup:
+- Quick start for OpenClaw and Claude Code
+- Configuration (agent ID, API keys, runtime settings)
+- Tool reference table (most useful tools for agents)
+- Multi-agent setup with visibility scoping
+- Copy-paste CLAUDE.md snippets for agent system prompts
+
+### What CerebroCortex adds over file-based memory
+
+| Capability | File-based memory | CerebroCortex |
+|---|---|---|
+| **Decay & promotion** | Everything lives forever | Unused memories fade, active ones get promoted |
+| **Semantic search** | Keyword / filename lookup | Meaning-based search with 384-dim embeddings |
+| **Associative graph** | Flat files | 9 link types with spreading activation |
+| **Multi-agent** | Per-agent directories | Shared/private/thread visibility with scoped recall |
+| **Session continuity** | Manual notes | Structured session save/recall with priority |
+| **Offline consolidation** | None | Dream Engine extracts patterns, prunes noise, discovers connections |
+| **File ingestion** | Built-in | `ingest_file` tool imports .md, .json, .txt, and code files |
+
+### Runtime Settings
+
+Settings can be changed without restarting the server:
+
+```bash
+# Environment variable for agent identity
+export CEREBRO_AGENT_ID="my-agent"
+
+# Runtime config persisted to data/settings.json
+# API keys in data/.env
+```
+
+Priority: `config.py` defaults < `data/settings.json` < `data/.env`
+
+---
+
 ## Dashboard
 
 A **cyberpunk-themed web dashboard** with real-time neural graph visualization.
@@ -935,6 +994,17 @@ salience: 0.8
 The event loop is the core of every asyncio application...
 ```
 
+### From Text & Code Files
+
+```bash
+# Via MCP tool
+ingest_file(file_path="/path/to/notes.txt", tags=["project"])
+
+# Supports: .txt, .py, .js, .ts, .go, .rs, .java, .rb, .sh, and more
+```
+
+Splits by blank lines into paragraphs. Paragraphs exceeding ~500 words are further split at sentence boundaries. Duplicates are automatically detected and skipped.
+
 ---
 
 ## Configuration
@@ -998,12 +1068,13 @@ All tunables live in `src/cerebro/config.py`. Key parameters:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `LLM_PRIMARY_PROVIDER` | `"anthropic"` | Primary LLM provider |
-| `LLM_PRIMARY_MODEL` | `"claude-sonnet-4-5-20250929"` | Primary model |
-| `LLM_FALLBACK_PROVIDER` | `"ollama"` | Fallback (local) |
-| `LLM_FALLBACK_MODEL` | `"phi3:mini"` | Fallback model |
+| `LLM_PRIMARY_PROVIDER` | `"openai_compat"` | Primary LLM provider (LM Studio, vLLM, etc.) |
+| `LLM_PRIMARY_MODEL` | `"qwen/qwen3-4b-2507"` | Primary model |
+| `LLM_FALLBACK_PROVIDER` | `"anthropic"` | Fallback (Claude API) |
+| `LLM_FALLBACK_MODEL` | `"claude-sonnet-4-5-20250929"` | Fallback model |
 | `LLM_TEMPERATURE` | 0.7 | Generation temperature |
 | `LLM_MAX_TOKENS` | 1024 | Max tokens per call |
+| `OPENAI_COMPAT_BASE_URL` | `"http://localhost:1234"` | OpenAI-compatible API endpoint |
 
 </details>
 
@@ -1015,11 +1086,13 @@ All tunables live in `src/cerebro/config.py`. Key parameters:
 CerebroCortex/
 ├── cerebro-mcp                    # MCP server launcher
 ├── cerebro-api                    # REST API launcher
+├── INTEGRATE.md                   # Agent framework integration guide
 ├── pyproject.toml                 # Package config & dependencies
 │
 ├── src/cerebro/
 │   ├── types.py                   # Core enums (6 memory types, 9 link types, 4 layers)
 │   ├── config.py                  # All tuneable parameters
+│   ├── settings.py                # Runtime settings (hot-reload from settings.json/.env)
 │   ├── cortex.py                  # Main coordinator — the brain itself
 │   │
 │   ├── models/                    # Pydantic data models
@@ -1053,14 +1126,15 @@ CerebroCortex/
 │   │   └── dream.py               #   DreamEngine — offline consolidation
 │   │
 │   ├── interfaces/                # External interfaces
-│   │   ├── mcp_server.py          #   MCP server (39 tools)
+│   │   ├── mcp_server.py          #   MCP server (40 tools, plain-English descriptions)
 │   │   ├── api_server.py          #   FastAPI REST server (30+ endpoints)
 │   │   └── cli.py                 #   Click CLI
 │   │
 │   ├── migration/                 # Data import tools
 │   │   ├── neo_cortex_import.py   #   Neo-Cortex migration
 │   │   ├── json_import.py         #   Generic JSON import
-│   │   └── markdown_import.py     #   Markdown knowledge base import
+│   │   ├── markdown_import.py     #   Markdown knowledge base import
+│   │   └── text_import.py         #   Plain text & code file import
 │   │
 │   └── utils/
 │       └── llm.py                 #   LLM client (Anthropic + Ollama fallback)
@@ -1068,7 +1142,7 @@ CerebroCortex/
 ├── web/
 │   └── index.html                 #   Cyberpunk dashboard (3D/2D graph viz)
 │
-├── tests/                         #   506 tests across 23 test files
+├── tests/                         #   532 tests across 23 test files
 │   ├── conftest.py                #   Shared fixtures (incl. multi_agent_cortex)
 │   ├── test_models/
 │   ├── test_storage/
@@ -1088,7 +1162,7 @@ CerebroCortex/
 
 ## Testing
 
-506 tests. Zero failures. ~7 minutes on RPi5.
+532 tests. ~11 minutes on RPi5.
 
 ```bash
 PYTHONPATH=src pytest tests/ -v
@@ -1110,12 +1184,12 @@ tests/test_engines/test_neocortex.py     ✓  (schema formation)
 tests/test_engines/test_dream.py              ✓  (dream + per-agent scoping)
 tests/test_engines/test_cortex.py             ✓  (integration tests)
 tests/test_engines/test_scope_enforcement.py  ✓  (multi-agent scope + link pruning)
-tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 39 tools)
+tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 40 tools)
 tests/test_interfaces/test_api_server.py ✓  (REST API)
 tests/test_interfaces/test_cli.py        ✓  (CLI commands)
 tests/test_migration/test_*.py           ✓  (all importers)
 tests/test_utils/test_llm.py            ✓  (LLM client)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 506 passed ━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 532 passed ━━━
 ```
 
 ---
@@ -1149,9 +1223,14 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 - [x] Cross-agent link pruning on visibility changes
 - [x] Episode query scope enforcement
 - [x] OpenAI-compatible LLM provider (LM Studio support)
+- [x] WebSocket real-time updates for dashboard
+- [x] Runtime settings management (hot-reload from settings.json/.env)
+- [x] Agent framework integration (OpenClaw drop-in, plain-English tool descriptions)
+- [x] Configurable agent ID via environment variable
+- [x] File ingestion MCP tool (.md, .json, .txt, code files)
 - [ ] Run Dream Engine on imported data to discover links
+- [ ] File watcher bridge for auto-ingesting agent memory directories
 - [ ] pgvector backend option for multi-node deployments
-- [ ] WebSocket real-time updates for dashboard
 - [ ] Temporal decay visualization in dashboard
 - [ ] Audit logging for access denials and visibility changes
 
