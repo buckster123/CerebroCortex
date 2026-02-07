@@ -177,9 +177,9 @@ class EpisodicEngine:
             return []
         return [step.memory_id for step in sorted(episode.steps, key=lambda s: s.position)]
 
-    def get_unconsolidated(self) -> list[Episode]:
+    def get_unconsolidated(self, agent_id: Optional[str] = None) -> list[Episode]:
         """Get episodes not yet processed by the Dream Engine."""
-        return self._graph.get_unconsolidated_episodes()
+        return self._graph.get_unconsolidated_episodes(agent_id=agent_id)
 
     def mark_consolidated(self, episode_id: str) -> bool:
         """Mark an episode as processed by the Dream Engine."""

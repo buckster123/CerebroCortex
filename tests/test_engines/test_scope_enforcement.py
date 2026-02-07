@@ -2,7 +2,7 @@
 
 Verifies that visibility rules (SHARED/PRIVATE/THREAD) are enforced
 across all CerebroCortex operations including recall, spreading activation,
-engine queries, and CRUD access checks.
+engine queries, CRUD access checks, episode scoping, and link pruning.
 """
 
 import tempfile
@@ -12,7 +12,7 @@ import pytest
 
 from cerebro.cortex import CerebroCortex, _scope_sql
 from cerebro.models.memory import MemoryMetadata, MemoryNode
-from cerebro.types import LinkType, MemoryType, Visibility
+from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
 
 
 # =============================================================================
@@ -434,3 +434,174 @@ class TestGetDeleteAccess:
             agent_id="BOB",
         )
         assert result is None
+
+
+# =============================================================================
+# TestEpisodeScope - Episode query scope enforcement
+# =============================================================================
+
+class TestEpisodeScope:
+    """Test that episode queries respect agent scope."""
+
+    def test_get_episode_denied_for_other_agent(self, multi_agent_cortex):
+        ctx = multi_agent_cortex["cortex"]
+        # Create an episode for ALICE
+        ep = ctx.episode_start(title="Alice Session", agent_id="ALICE")
+        ctx.episode_end(ep.id)
+
+        # BOB should not see ALICE's episode
+        result = ctx.get_episode(ep.id, agent_id="BOB")
+        assert result is None
+
+    def test_get_episode_owner_sees_own(self, multi_agent_cortex):
+        ctx = multi_agent_cortex["cortex"]
+        ep = ctx.episode_start(title="Alice Session", agent_id="ALICE")
+        ctx.episode_end(ep.id)
+
+        result = ctx.get_episode(ep.id, agent_id="ALICE")
+        assert result is not None
+        assert result.id == ep.id
+
+    def test_get_episode_no_filter_returns_all(self, multi_agent_cortex):
+        ctx = multi_agent_cortex["cortex"]
+        ep = ctx.episode_start(title="Alice Session", agent_id="ALICE")
+        ctx.episode_end(ep.id)
+
+        # No agent_id = see everything (backwards compat)
+        result = ctx.get_episode(ep.id)
+        assert result is not None
+
+    def test_get_episode_memories_denied(self, multi_agent_cortex):
+        ctx = multi_agent_cortex["cortex"]
+        ep = ctx.episode_start(title="Alice Session", agent_id="ALICE")
+        node = ctx.remember(
+            content="Alice's episode memory about project planning",
+            agent_id="ALICE",
+        )
+        if node:
+            ctx.episodes.add_step(ep.id, node.id)
+        ctx.episode_end(ep.id)
+
+        # BOB should not get memories from ALICE's episode
+        memories = ctx.get_episode_memories(ep.id, agent_id="BOB")
+        assert memories == []
+
+    def test_get_episode_memories_owner_sees(self, multi_agent_cortex):
+        ctx = multi_agent_cortex["cortex"]
+        ep = ctx.episode_start(title="Alice Session", agent_id="ALICE")
+        node = ctx.remember(
+            content="Alice's episode memory about architecture decisions",
+            agent_id="ALICE",
+        )
+        if node:
+            ctx.episodes.add_step(ep.id, node.id)
+        ctx.episode_end(ep.id)
+
+        memories = ctx.get_episode_memories(ep.id, agent_id="ALICE")
+        assert len(memories) >= 1
+
+
+# =============================================================================
+# TestLinkPruning - Cross-agent link pruning on visibility change
+# =============================================================================
+
+class TestLinkPruning:
+    """Test that visibility changes to PRIVATE prune cross-agent links."""
+
+    def test_visibility_change_prunes_cross_agent_links(self):
+        """Links between agents are pruned when one side goes PRIVATE."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(
+                db_path=Path(d) / "prune.db", chroma_dir=Path(d) / "chroma",
+            )
+            ctx.initialize()
+
+            alice_mem = ctx.remember(
+                content="Alice shared knowledge about system architecture patterns",
+                agent_id="ALICE", visibility=Visibility.SHARED,
+            )
+            bob_mem = ctx.remember(
+                content="Bob shared knowledge about deployment patterns",
+                agent_id="BOB", visibility=Visibility.SHARED,
+            )
+
+            # Create a cross-agent link
+            ctx.links.create_link(
+                alice_mem.id, bob_mem.id, LinkType.SEMANTIC,
+                weight=0.7, source="test",
+            )
+            neighbors = ctx.links.get_neighbors(alice_mem.id)
+            assert len(neighbors) > 0
+
+            # ALICE makes her memory PRIVATE — link should be pruned
+            ctx.share_memory(alice_mem.id, Visibility.PRIVATE, agent_id="ALICE")
+
+            neighbors = ctx.links.get_neighbors(alice_mem.id)
+            neighbor_ids = {n[0] for n in neighbors}
+            assert bob_mem.id not in neighbor_ids
+
+            ctx.close()
+
+    def test_visibility_change_keeps_same_agent_links(self):
+        """Links between same-agent memories are preserved when going PRIVATE."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(
+                db_path=Path(d) / "prune_keep.db", chroma_dir=Path(d) / "chroma",
+            )
+            ctx.initialize()
+
+            alice_mem1 = ctx.remember(
+                content="Alice shared fact about Python programming",
+                agent_id="ALICE", visibility=Visibility.SHARED,
+            )
+            alice_mem2 = ctx.remember(
+                content="Alice second fact about Python testing",
+                agent_id="ALICE", visibility=Visibility.SHARED,
+            )
+
+            # Create a same-agent link
+            ctx.links.create_link(
+                alice_mem1.id, alice_mem2.id, LinkType.SEMANTIC,
+                weight=0.7, source="test",
+            )
+
+            # ALICE makes mem1 PRIVATE — same-agent link should stay
+            ctx.share_memory(alice_mem1.id, Visibility.PRIVATE, agent_id="ALICE")
+
+            neighbors = ctx.links.get_neighbors(alice_mem1.id)
+            neighbor_ids = {n[0] for n in neighbors}
+            assert alice_mem2.id in neighbor_ids
+
+            ctx.close()
+
+    def test_share_to_shared_no_pruning(self):
+        """Changing to SHARED doesn't prune anything."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(
+                db_path=Path(d) / "prune_shared.db", chroma_dir=Path(d) / "chroma",
+            )
+            ctx.initialize()
+
+            alice_mem = ctx.remember(
+                content="Alice private knowledge about internal API configuration",
+                agent_id="ALICE", visibility=Visibility.PRIVATE,
+            )
+            bob_mem = ctx.remember(
+                content="Bob knowledge about API gateway patterns",
+                agent_id="BOB", visibility=Visibility.SHARED,
+            )
+
+            # Create link (manually, since auto-link won't link private)
+            ctx.links.create_link(
+                alice_mem.id, bob_mem.id, LinkType.SEMANTIC,
+                weight=0.7, source="test",
+            )
+
+            # ALICE shares her memory — link should remain
+            ctx.share_memory(alice_mem.id, Visibility.SHARED, agent_id="ALICE")
+
+            neighbors = ctx.links.get_neighbors(alice_mem.id)
+            neighbor_ids = {n[0] for n in neighbors}
+            assert bob_mem.id in neighbor_ids
+
+            ctx.close()

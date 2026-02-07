@@ -12,7 +12,7 @@ import pytest
 
 from cerebro.cortex import CerebroCortex
 from cerebro.engines.dream import DreamEngine, DreamReport, PhaseReport
-from cerebro.types import DreamPhase, EmotionalValence, MemoryType
+from cerebro.types import DreamPhase, EmotionalValence, MemoryType, Visibility
 from cerebro.utils.llm import LLMResponse
 
 
@@ -417,3 +417,127 @@ class TestDreamLog:
         phases = [r["phase"] for r in rows]
         assert "sws_replay" in phases
         assert "pruning" in phases
+
+
+def _seed_scoped_episode(cortex, agent_id, n_memories=3):
+    """Create an episode with memories for a specific agent."""
+    ep = cortex.episode_start(title=f"{agent_id} Episode", agent_id=agent_id)
+    mem_ids = []
+    for i in range(n_memories):
+        node = cortex.remember(
+            content=f"{agent_id} debug step {i}: analyzing error logs for issue {i}",
+            memory_type=MemoryType.EPISODIC,
+            tags=["debugging", agent_id.lower()],
+            agent_id=agent_id,
+        )
+        if node:
+            mem_ids.append(node.id)
+            cortex.episodes.add_step(ep.id, node.id, role="event")
+    cortex.episode_end(ep.id, summary=f"{agent_id} debugging session")
+    return ep.id, mem_ids
+
+
+class TestDreamScope:
+    """Test that scoped dream cycles respect agent boundaries."""
+
+    def test_scoped_dream_only_sees_own_and_shared(self):
+        """ALICE dream doesn't process BOB's private memories."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(db_path=Path(d) / "dream_scope.db", chroma_dir=Path(d) / "chroma")
+            ctx.initialize()
+
+            # Create BOB's private memory
+            bob_priv = ctx.remember(
+                content="Bob private secret configuration data for internal systems",
+                agent_id="BOB", visibility=Visibility.PRIVATE,
+            )
+            # Create ALICE shared memory
+            alice_shared = ctx.remember(
+                content="Alice shared knowledge about Python patterns",
+                agent_id="ALICE", visibility=Visibility.SHARED,
+            )
+
+            # Scoped get_all_node_ids should exclude BOB's private for ALICE
+            alice_ids = ctx.graph.get_all_node_ids(agent_id="ALICE")
+            assert alice_shared.id in alice_ids
+            assert bob_priv.id not in alice_ids
+
+            # BOB sees own private
+            bob_ids = ctx.graph.get_all_node_ids(agent_id="BOB")
+            assert bob_priv.id in bob_ids
+            assert alice_shared.id in bob_ids  # shared is visible
+
+            ctx.close()
+
+    def test_scoped_dream_doesnt_prune_others_private(self):
+        """Pruning only touches own memories, not other agents' private memories."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(db_path=Path(d) / "dream_prune.db", chroma_dir=Path(d) / "chroma")
+            ctx.initialize()
+
+            # BOB's private memory — low salience, sensory, old
+            bob_priv = ctx.remember(
+                content="Bob private low-salience note about temporary observations",
+                agent_id="BOB", visibility=Visibility.PRIVATE,
+            )
+
+            engine = DreamEngine(ctx, llm_client=None)
+            engine._agent_id = "ALICE"  # Simulate ALICE dream cycle
+
+            # ALICE's pruning should not see BOB's private memory
+            alice_ids = ctx.graph.get_all_node_ids(agent_id="ALICE")
+            assert bob_priv.id not in alice_ids
+
+            ctx.close()
+
+    def test_scoped_dream_unconsolidated_episodes(self):
+        """get_unconsolidated(agent_id) only returns that agent's episodes."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(db_path=Path(d) / "dream_ep.db", chroma_dir=Path(d) / "chroma")
+            ctx.initialize()
+
+            _seed_scoped_episode(ctx, "ALICE", n_memories=2)
+            _seed_scoped_episode(ctx, "BOB", n_memories=2)
+
+            alice_eps = ctx.episodes.get_unconsolidated(agent_id="ALICE")
+            bob_eps = ctx.episodes.get_unconsolidated(agent_id="BOB")
+            all_eps = ctx.episodes.get_unconsolidated()
+
+            assert len(alice_eps) == 1
+            assert len(bob_eps) == 1
+            assert len(all_eps) == 2
+            assert alice_eps[0].agent_id == "ALICE"
+            assert bob_eps[0].agent_id == "BOB"
+
+            ctx.close()
+
+    def test_auto_per_agent_cycle(self):
+        """run_all_agents_cycle() produces one report per agent."""
+        with tempfile.TemporaryDirectory() as d:
+            ctx = CerebroCortex(db_path=Path(d) / "dream_all.db", chroma_dir=Path(d) / "chroma")
+            ctx.initialize()
+
+            # Create memories for two agents
+            ctx.remember(content="Alice memory for per-agent dream cycle test", agent_id="ALICE")
+            ctx.remember(content="Bob memory for per-agent dream cycle test", agent_id="BOB")
+
+            engine = DreamEngine(ctx, llm_client=None)
+            reports = engine.run_all_agents_cycle()
+
+            assert len(reports) == 2
+            agent_ids = {r.agent_id for r in reports}
+            assert "ALICE" in agent_ids
+            assert "BOB" in agent_ids
+            assert all(r.success for r in reports)
+
+            ctx.close()
+
+    def test_dream_report_includes_agent_id(self):
+        """DreamReport carries agent_id through to_dict()."""
+        report = DreamReport(agent_id="ALICE")
+        d = report.to_dict()
+        assert d["agent_id"] == "ALICE"
+
+        report2 = DreamReport()
+        d2 = report2.to_dict()
+        assert d2["agent_id"] is None

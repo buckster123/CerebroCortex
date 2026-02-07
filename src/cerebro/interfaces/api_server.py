@@ -510,10 +510,10 @@ async def list_episodes(
 
 
 @app.get("/episodes/{episode_id}")
-async def get_episode(episode_id: str):
+async def get_episode(episode_id: str, agent_id: Optional[str] = None):
     """Get a single episode by ID."""
     ctx = get_cortex()
-    episode = ctx.get_episode(episode_id)
+    episode = ctx.get_episode(episode_id, agent_id=agent_id)
     if episode is None:
         raise HTTPException(404, f"Episode not found: {episode_id}")
     return {
@@ -528,10 +528,10 @@ async def get_episode(episode_id: str):
 
 
 @app.get("/episodes/{episode_id}/memories")
-async def get_episode_memories(episode_id: str):
+async def get_episode_memories(episode_id: str, agent_id: Optional[str] = None):
     """Get all memories in an episode, ordered by position."""
     ctx = get_cortex()
-    memories = ctx.get_episode_memories(episode_id)
+    memories = ctx.get_episode_memories(episode_id, agent_id=agent_id)
     return {
         "episode_id": episode_id,
         "count": len(memories),
@@ -1221,8 +1221,8 @@ async def dream_run():
     if dream.is_running:
         raise HTTPException(409, "Dream cycle already in progress")
 
-    report = dream.run_cycle()
-    return report.to_dict()
+    reports = dream.run_all_agents_cycle()
+    return {"reports": [r.to_dict() for r in reports]}
 
 
 @app.get("/dream/status")

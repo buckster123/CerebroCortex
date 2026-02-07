@@ -8,7 +8,7 @@
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-357_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="357 Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-506_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="506 Tests"/></a>
   <a href="#brain-regions"><img src="https://img.shields.io/badge/brain_regions-9-ff0055?style=for-the-badge" alt="9 Brain Regions"/></a>
   <a href="#memory-types"><img src="https://img.shields.io/badge/memory_types-6-00d4ff?style=for-the-badge" alt="6 Memory Types"/></a>
   <a href="#dream-engine"><img src="https://img.shields.io/badge/dream_engine-6_phases-9d4edd?style=for-the-badge" alt="Dream Engine"/></a>
@@ -18,6 +18,7 @@
   <a href="#architecture">Architecture</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#brain-regions">Brain Regions</a> &bull;
+  <a href="#multi-agent-memory">Multi-Agent</a> &bull;
   <a href="#dream-engine">Dream Engine</a> &bull;
   <a href="#interfaces">Interfaces</a> &bull;
   <a href="#dashboard">Dashboard</a>
@@ -56,8 +57,8 @@ Real memory is:
 ```mermaid
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
-        MCP["MCP Server<br/><small>22 tools</small>"]
-        API["REST API<br/><small>20 endpoints</small>"]
+        MCP["MCP Server<br/><small>39 tools</small>"]
+        API["REST API<br/><small>30+ endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
         DASH["Dashboard<br/><small>Cyberpunk UI</small>"]
     end
@@ -167,21 +168,23 @@ cerebro dream --run
 
 ```python
 from cerebro.cortex import CerebroCortex
-from cerebro.types import MemoryType, LinkType
+from cerebro.types import MemoryType, LinkType, Visibility
 
 brain = CerebroCortex()
 brain.initialize()
 
-# Remember
+# Remember (with multi-agent support)
 node = brain.remember(
     "Deployment failed due to missing env var DATABASE_URL",
     memory_type=MemoryType.EPISODIC,
     tags=["deployment", "bug"],
     salience=0.8,
+    agent_id="ALICE",                  # Which agent owns this
+    visibility=Visibility.SHARED,       # SHARED, PRIVATE, or THREAD
 )
 
-# Recall
-results = brain.recall("deployment issues", top_k=5)
+# Recall (scoped to agent's visible memories)
+results = brain.recall("deployment issues", top_k=5, agent_id="BOB")
 for memory, score in results:
     print(f"  [{score:.2f}] {memory.content[:80]}")
 
@@ -487,6 +490,52 @@ graph TD
 
 ---
 
+## Multi-Agent Memory
+
+CerebroCortex supports **solo agents, multi-agent teams, and hive-mind configurations** with full visibility scoping:
+
+| Visibility | Who can see it | Use case |
+|---|---|---|
+| **SHARED** (default) | All agents | Collective knowledge, shared facts |
+| **PRIVATE** | Only the owner | Internal state, secrets, personal notes |
+| **THREAD** | Participants in a conversation thread | Scoped collaboration |
+
+### How It Works
+
+Every memory carries `agent_id` and `visibility`. Enforcement flows through every layer:
+
+- **Recall** — ChromaDB vector search uses `$or` visibility clauses; post-filter applies `_can_access()`
+- **Spreading activation** — batch visibility cache prevents leaking across agent boundaries
+- **All 9 engines** — SQL queries append scope filters via `_scope_sql()`
+- **Dream Engine** — runs a scoped cycle per agent; shared memories consolidate in every agent's dream
+- **Auto-linking** — cross-agent PRIVATE links are prevented at creation time
+- **Link pruning** — when visibility changes to PRIVATE, cross-agent links are automatically deleted
+- **Episodes** — `get_episode()` and `get_episode_memories()` verify agent ownership
+
+### Quick Example
+
+```bash
+# Agent ALICE stores private and shared memories
+cerebro remember "Alice's secret" --agent ALICE --visibility private
+cerebro remember "Shared knowledge" --agent ALICE
+
+# BOB can't see ALICE's private memories
+cerebro recall "secret" --agent BOB    # returns nothing
+cerebro recall "knowledge" --agent BOB # finds shared knowledge
+
+# Owner can share private memories
+cerebro share <mem_id> shared --agent ALICE
+
+# Dream runs per-agent automatically
+cerebro dream --run  # One cycle per registered agent
+```
+
+### Backwards Compatibility
+
+Omitting `--agent` or `agent_id` disables filtering entirely — all memories are visible. This means single-agent setups work unchanged, and the default visibility of SHARED ensures all existing memories remain accessible.
+
+---
+
 ## Dream Engine
 
 The crown jewel. Inspired by sleep research, the Dream Engine runs **offline consolidation cycles** that reorganize, strengthen, prune, and recombine memories — exactly like the brain does during sleep.
@@ -578,8 +627,10 @@ The creative phase. Samples **20 diverse memories**, then checks **10 random pai
 
 ### Running the Dream Engine
 
+Dream cycles run **per-agent automatically** — each registered agent gets a scoped dream where shared memories participate in every cycle but private memories stay isolated.
+
 ```bash
-# CLI
+# CLI (auto per-agent)
 cerebro dream --run
 
 # REST API
@@ -591,8 +642,8 @@ dream_run(max_llm_calls=20)
 
 **LLM Configuration:**
 - Primary: **Claude** (Anthropic API)
-- Fallback: **Ollama** (local, e.g. `phi3:mini`)
-- Max LLM calls per cycle: 20
+- Fallback: **Ollama** / **OpenAI-compatible** (local LM Studio, etc.)
+- Max LLM calls per cycle per agent: 20
 - Temperature: 0.7
 
 ---
@@ -644,7 +695,7 @@ graph LR
 
 CerebroCortex exposes three interfaces — use whichever fits your workflow:
 
-### MCP Server (22 Tools)
+### MCP Server (39 Tools)
 
 The native interface for Claude. Drop-in replacement for simpler memory systems.
 
@@ -653,32 +704,58 @@ The native interface for Claude. Drop-in replacement for simpler memory systems.
 ```
 
 <details>
-<summary><strong>Full MCP Tool List</strong></summary>
+<summary><strong>Full MCP Tool List (39 tools)</strong></summary>
 
 | Tool | Description |
 |---|---|
+| **Core Memory** | |
 | `remember` | Store memory through full encoding pipeline |
 | `recall` | Search with spreading activation + ACT-R/FSRS scoring |
+| `get_memory` | Retrieve a single memory by ID |
+| `update_memory` | Update content, tags, salience, or visibility |
+| `delete_memory` | Delete a memory |
+| `share_memory` | Change memory visibility (owner only) |
 | `associate` | Create typed link between memories |
+| **Episodes** | |
 | `episode_start` | Begin episode recording |
 | `episode_add_step` | Add memory as episode step |
 | `episode_end` | End episode with summary |
+| `list_episodes` | List recent episodes |
+| `get_episode` | Get episode details (scope-checked) |
+| `get_episode_memories` | Get episode memories (scope-checked) |
+| **Sessions** | |
 | `session_save` | Save session continuity note |
 | `session_recall` | Retrieve previous session notes |
+| **Agents** | |
 | `register_agent` | Register new agent profile |
 | `list_agents` | List all registered agents |
+| **Intentions** | |
+| `store_intention` | Create prospective memory (TODO) |
+| `list_intentions` | List pending intentions |
+| `resolve_intention` | Mark intention as resolved |
+| **Schemas & Procedures** | |
+| `create_schema` | Create schematic memory |
+| `list_schemas` | List schemas (scope-filtered) |
+| `store_procedure` | Store procedural memory |
+| `list_procedures` | List procedures (scope-filtered) |
+| **Graph Exploration** | |
+| `memory_neighbors` | Get neighbors of a memory |
+| `find_path` | Shortest path between two memories |
+| `common_neighbors` | Memories connected to both A and B |
+| **System** | |
+| `cortex_stats` | Comprehensive system statistics |
 | `memory_health` | Memory system health report |
 | `memory_graph_stats` | Detailed graph statistics |
-| `memory_neighbors` | Get neighbors of a memory |
-| `cortex_stats` | Comprehensive system statistics |
-| `dream_run` | Run Dream Engine consolidation cycle |
+| `emotions` | Emotional summary across memories |
+| `dream_run` | Run Dream Engine (per-agent cycles) |
 | `dream_status` | Get last dream report |
-| `memory_store` | Backward-compatible alias for `remember` |
-| `memory_search` | Backward-compatible alias for `recall` |
+| **Compatibility** | |
+| `memory_store` | Alias for `remember` |
+| `memory_search` | Alias for `recall` |
 
 </details>
 
-### REST API (20 Endpoints)
+### REST API (30+ Endpoints)
 
 Full HTTP API with interactive docs at `/docs`.
 
@@ -697,38 +774,82 @@ Full HTTP API with interactive docs at `/docs`.
 | `GET` | `/health` | Health check |
 | `GET` | `/stats` | System statistics |
 | `GET` | `/ui` | Web dashboard |
+| **Memory CRUD** | | |
 | `POST` | `/remember` | Store memory |
 | `POST` | `/recall` | Search memories |
-| `POST` | `/associate` | Create link |
 | `GET` | `/q/{query}` | Quick search |
+| `GET` | `/memory/{id}` | Get memory by ID |
+| `PATCH` | `/memory/{id}` | Update memory |
+| `DELETE` | `/memory/{id}` | Delete memory |
+| `POST` | `/memory/{id}/share` | Change visibility (owner only) |
+| `POST` | `/associate` | Create link |
+| **Episodes** | | |
 | `POST` | `/episodes/start` | Start episode |
 | `POST` | `/episodes/{id}/step` | Add episode step |
 | `POST` | `/episodes/{id}/end` | End episode |
+| `GET` | `/episodes` | List episodes |
+| `GET` | `/episodes/{id}` | Get episode (scope-checked) |
+| `GET` | `/episodes/{id}/memories` | Get episode memories (scope-checked) |
+| **Sessions** | | |
 | `POST` | `/sessions/save` | Save session note |
 | `GET` | `/sessions` | Recall sessions |
+| **Agents** | | |
 | `GET` | `/agents` | List agents |
 | `POST` | `/agents` | Register agent |
+| **Intentions** | | |
+| `POST` | `/intentions` | Store intention |
+| `GET` | `/intentions` | List pending |
+| `POST` | `/intentions/{id}/resolve` | Resolve intention |
+| **Schemas & Procedures** | | |
+| `GET` | `/schemas` | List schemas |
+| `POST` | `/schemas` | Create schema |
+| `GET` | `/procedures` | List procedures |
+| `POST` | `/procedures` | Store procedure |
+| **Graph & System** | | |
 | `GET` | `/memory/health` | Health report |
 | `GET` | `/graph/stats` | Graph statistics |
 | `GET` | `/graph/data` | Graph data (for visualization) |
 | `GET` | `/graph/neighbors/{id}` | Memory neighbors |
-| `POST` | `/dream/run` | Run Dream Engine |
+| `GET` | `/graph/path/{a}/{b}` | Find path |
+| `POST` | `/dream/run` | Run Dream Engine (per-agent) |
 | `GET` | `/dream/status` | Dream status |
+| `GET` | `/emotions` | Emotional summary |
 
 </details>
 
 ### CLI
 
 ```bash
-cerebro stats                          # System overview
-cerebro remember "..." --type semantic # Store
-cerebro recall "query" -n 10           # Search
-cerebro associate <id1> <id2> causal   # Link
-cerebro episode start --title "Debug"  # Episodes
-cerebro session save "..." --priority high
-cerebro agents list --json
+# Core memory
+cerebro remember "..." --type semantic          # Store
+cerebro recall "query" -n 10                    # Search
+cerebro recall "query" --agent BOB --thread t1  # Scoped search
+cerebro get <id> --agent ALICE                  # Get by ID (scope-checked)
+cerebro update <id> --salience 0.9 --tags py    # Update
+cerebro delete <id> --force                     # Delete
+cerebro share <id> shared --agent ALICE         # Change visibility
+cerebro associate <id1> <id2> causal            # Link
+
+# Episodes
+cerebro episode start --title "Debug"
+cerebro episode get <ep_id> --agent ALICE       # Scope-checked
+cerebro episode list
+
+# Intentions, schemas, procedures
+cerebro intention add "TODO: fix auth"
+cerebro intention list
+cerebro schema list
+cerebro procedure add "Step 1: ..." --tags ops
+
+# System
+cerebro stats
 cerebro health
-cerebro import neocortex data.json     # Migration
+cerebro emotions
+cerebro agents list --json
+cerebro dream --run                             # Per-agent dream cycles
+
+# Migration
+cerebro import neocortex data.json
 cerebro import json data.json
 cerebro import markdown knowledge.md
 ```
@@ -932,8 +1053,8 @@ CerebroCortex/
 │   │   └── dream.py               #   DreamEngine — offline consolidation
 │   │
 │   ├── interfaces/                # External interfaces
-│   │   ├── mcp_server.py          #   MCP server (22 tools)
-│   │   ├── api_server.py          #   FastAPI REST server
+│   │   ├── mcp_server.py          #   MCP server (39 tools)
+│   │   ├── api_server.py          #   FastAPI REST server (30+ endpoints)
 │   │   └── cli.py                 #   Click CLI
 │   │
 │   ├── migration/                 # Data import tools
@@ -947,12 +1068,12 @@ CerebroCortex/
 ├── web/
 │   └── index.html                 #   Cyberpunk dashboard (3D/2D graph viz)
 │
-├── tests/                         #   357 tests across 22 test files
-│   ├── conftest.py                #   Shared fixtures
+├── tests/                         #   506 tests across 23 test files
+│   ├── conftest.py                #   Shared fixtures (incl. multi_agent_cortex)
 │   ├── test_models/
 │   ├── test_storage/
 │   ├── test_activation/
-│   ├── test_engines/              #   (10 files — one per engine + integration)
+│   ├── test_engines/              #   (11 files — engines + scope enforcement)
 │   ├── test_interfaces/
 │   ├── test_migration/
 │   └── test_utils/
@@ -967,7 +1088,7 @@ CerebroCortex/
 
 ## Testing
 
-357 tests. Zero failures. Runs in ~3 seconds.
+506 tests. Zero failures. ~7 minutes on RPi5.
 
 ```bash
 PYTHONPATH=src pytest tests/ -v
@@ -986,14 +1107,15 @@ tests/test_engines/test_association.py   ✓  (linking + Hebbian)
 tests/test_engines/test_cerebellum.py    ✓  (procedural memory)
 tests/test_engines/test_prefrontal.py    ✓  (executive ranking)
 tests/test_engines/test_neocortex.py     ✓  (schema formation)
-tests/test_engines/test_dream.py         ✓  (dream consolidation)
-tests/test_engines/test_cortex.py        ✓  (integration tests)
-tests/test_interfaces/test_mcp_server.py ✓  (MCP protocol)
+tests/test_engines/test_dream.py              ✓  (dream + per-agent scoping)
+tests/test_engines/test_cortex.py             ✓  (integration tests)
+tests/test_engines/test_scope_enforcement.py  ✓  (multi-agent scope + link pruning)
+tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 39 tools)
 tests/test_interfaces/test_api_server.py ✓  (REST API)
 tests/test_interfaces/test_cli.py        ✓  (CLI commands)
 tests/test_migration/test_*.py           ✓  (all importers)
 tests/test_utils/test_llm.py            ✓  (LLM client)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 357 passed ━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 506 passed ━━━
 ```
 
 ---
@@ -1022,11 +1144,16 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 ## Roadmap
 
 - [x] Wire ChromaDB vector search into recall pipeline
+- [x] Multi-agent memory scoping (SHARED/PRIVATE/THREAD visibility)
+- [x] Per-agent Dream Engine consolidation cycles
+- [x] Cross-agent link pruning on visibility changes
+- [x] Episode query scope enforcement
+- [x] OpenAI-compatible LLM provider (LM Studio support)
 - [ ] Run Dream Engine on imported data to discover links
 - [ ] pgvector backend option for multi-node deployments
 - [ ] WebSocket real-time updates for dashboard
-- [ ] Multi-agent memory sharing protocols
 - [ ] Temporal decay visualization in dashboard
+- [ ] Audit logging for access denials and visibility changes
 
 ---
 

@@ -467,16 +467,17 @@ def episode_list(limit, agent, as_json):
 
 @episode.command("get")
 @click.argument("episode_id")
+@click.option("--agent", help="Requesting agent ID (scope check)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def episode_get(episode_id, as_json):
+def episode_get(episode_id, agent, as_json):
     """Get an episode by ID with its steps."""
     ctx = get_cortex()
-    ep = ctx.get_episode(episode_id)
+    ep = ctx.get_episode(episode_id, agent_id=agent)
     if ep is None:
         click.echo(f"Episode not found: {episode_id}", err=True)
         sys.exit(1)
 
-    memories = ctx.get_episode_memories(episode_id)
+    memories = ctx.get_episode_memories(episode_id, agent_id=agent)
     mem_map = {m.id: m for m in memories}
 
     if as_json:
@@ -886,24 +887,26 @@ def dream_run(as_json):
         click.echo("Warning: No LLM available. LLM-assisted phases will be skipped.", err=True)
 
     engine = DreamEngine(ctx, llm_client=llm)
-    click.echo("Starting dream cycle...")
+    click.echo("Starting dream cycle (per-agent)...")
 
-    report = engine.run_cycle()
+    reports = engine.run_all_agents_cycle()
 
     if as_json:
-        _json_out(report.to_dict())
+        _json_out([r.to_dict() for r in reports])
         return
 
-    click.echo(f"\nDream Cycle Complete")
-    click.echo("=" * 40)
-    click.echo(f"  Duration:     {report.total_duration_seconds:.1f}s")
-    click.echo(f"  Episodes:     {report.episodes_consolidated} consolidated")
-    click.echo(f"  LLM calls:    {report.total_llm_calls}")
-    click.echo(f"  Success:      {report.success}")
-    click.echo(f"\nPhases:")
-    for p in report.phases:
-        status = "OK" if p.success else "FAIL"
-        click.echo(f"  {p.phase.value:30s} [{status}] {p.duration_seconds:.1f}s - {p.notes}")
+    for report in reports:
+        agent_label = report.agent_id or "unscoped"
+        click.echo(f"\nDream Cycle: {agent_label}")
+        click.echo("=" * 40)
+        click.echo(f"  Duration:     {report.total_duration_seconds:.1f}s")
+        click.echo(f"  Episodes:     {report.episodes_consolidated} consolidated")
+        click.echo(f"  LLM calls:    {report.total_llm_calls}")
+        click.echo(f"  Success:      {report.success}")
+        click.echo(f"\n  Phases:")
+        for p in report.phases:
+            status = "OK" if p.success else "FAIL"
+            click.echo(f"    {p.phase.value:30s} [{status}] {p.duration_seconds:.1f}s - {p.notes}")
 
 
 @dream.command("status")

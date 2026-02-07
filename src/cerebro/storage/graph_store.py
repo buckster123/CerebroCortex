@@ -241,9 +241,17 @@ class GraphStore:
         ).fetchall()
         return [self._row_to_memory_node(r) for r in rows]
 
-    def get_all_node_ids(self) -> list[str]:
-        """Get all memory node IDs."""
-        rows = self.conn.execute("SELECT id FROM memory_nodes").fetchall()
+    def get_all_node_ids(self, agent_id: Optional[str] = None) -> list[str]:
+        """Get all memory node IDs, optionally scoped to an agent's visible memories."""
+        if agent_id:
+            rows = self.conn.execute(
+                "SELECT id FROM memory_nodes WHERE visibility='shared' "
+                "OR (visibility='private' AND agent_id=?) "
+                "OR (visibility='thread' AND agent_id=?)",
+                (agent_id, agent_id),
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT id FROM memory_nodes").fetchall()
         return [r["id"] for r in rows]
 
     def count_nodes(self) -> int:
@@ -519,11 +527,17 @@ class GraphStore:
             steps=steps,
         )
 
-    def get_unconsolidated_episodes(self) -> list[Episode]:
+    def get_unconsolidated_episodes(self, agent_id: Optional[str] = None) -> list[Episode]:
         """Get episodes not yet processed by the Dream Engine."""
-        rows = self.conn.execute(
-            "SELECT id FROM episodes WHERE consolidated = 0 ORDER BY created_at"
-        ).fetchall()
+        if agent_id:
+            rows = self.conn.execute(
+                "SELECT id FROM episodes WHERE consolidated = 0 AND agent_id = ? ORDER BY created_at",
+                (agent_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id FROM episodes WHERE consolidated = 0 ORDER BY created_at"
+            ).fetchall()
         return [self.get_episode(r["id"]) for r in rows if self.get_episode(r["id"])]
 
     # =========================================================================

@@ -543,7 +543,40 @@ class CerebroCortex:
         coll = self._collection_for_type(updated.metadata.memory_type)
         self._chroma.update_node(coll, updated)
 
+        # Prune cross-agent links when visibility changes to PRIVATE
+        if visibility == Visibility.PRIVATE:
+            self._prune_cross_agent_links(memory_id, updated.metadata.agent_id)
+
         return updated
+
+    def _prune_cross_agent_links(self, memory_id: str, owner_agent_id: str) -> int:
+        """Remove links where the PRIVATE memory crosses agent boundaries.
+
+        When a memory becomes PRIVATE, links to/from memories owned by other
+        agents are pruned to maintain isolation. Same-agent links are preserved.
+
+        Returns the number of links pruned.
+        """
+        rows = self._graph.conn.execute(
+            "SELECT id, source_id, target_id FROM associative_links "
+            "WHERE source_id = ? OR target_id = ?",
+            (memory_id, memory_id),
+        ).fetchall()
+
+        pruned = 0
+        for row in rows:
+            other_id = row["target_id"] if row["source_id"] == memory_id else row["source_id"]
+            other = self._graph.get_node(other_id)
+            if other and other.metadata.agent_id != owner_agent_id:
+                self._graph.conn.execute(
+                    "DELETE FROM associative_links WHERE id = ?", (row["id"],)
+                )
+                pruned += 1
+
+        if pruned:
+            self._graph.conn.commit()
+            self._graph.resync_igraph()
+        return pruned
 
     def share_memory(
         self,
@@ -567,7 +600,11 @@ class CerebroCortex:
         # Only the owner can change visibility
         if agent_id and node.metadata.agent_id != agent_id:
             return None
-        return self.update_memory(memory_id, visibility=new_visibility)
+        updated = self.update_memory(memory_id, visibility=new_visibility)
+        # Prune cross-agent links when going PRIVATE
+        if updated and new_visibility == Visibility.PRIVATE:
+            self._prune_cross_agent_links(memory_id, node.metadata.agent_id)
+        return updated
 
     # =========================================================================
     # Episode management (delegates to hippocampus)
@@ -603,12 +640,28 @@ class CerebroCortex:
         """Get recent episodes."""
         return self.episodes.get_recent_episodes(limit=limit, agent_id=agent_id)
 
-    def get_episode(self, episode_id: str) -> Optional[Episode]:
-        """Get an episode by ID with all its steps."""
-        return self._graph.get_episode(episode_id)
+    def get_episode(self, episode_id: str, agent_id: Optional[str] = None) -> Optional[Episode]:
+        """Get an episode by ID with all its steps.
 
-    def get_episode_memories(self, episode_id: str) -> list[MemoryNode]:
-        """Get all memories in an episode, ordered by position."""
+        If agent_id is provided, only returns the episode if it belongs to that agent.
+        """
+        ep = self._graph.get_episode(episode_id)
+        if ep is None:
+            return None
+        if agent_id and ep.agent_id != agent_id:
+            return None
+        return ep
+
+    def get_episode_memories(self, episode_id: str, agent_id: Optional[str] = None) -> list[MemoryNode]:
+        """Get all memories in an episode, ordered by position.
+
+        If agent_id is provided, verifies the episode belongs to that agent first.
+        """
+        ep = self._graph.get_episode(episode_id)
+        if ep is None:
+            return []
+        if agent_id and ep.agent_id != agent_id:
+            return []
         memory_ids = self.episodes.get_episode_memories(episode_id)
         return [n for mid in memory_ids if (n := self._graph.get_node(mid))]
 

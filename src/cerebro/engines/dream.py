@@ -66,6 +66,7 @@ class DreamReport:
     """Report from a full dream cycle."""
     started_at: datetime = field(default_factory=datetime.now)
     ended_at: Optional[datetime] = None
+    agent_id: Optional[str] = None
     phases: list[PhaseReport] = field(default_factory=list)
     episodes_consolidated: int = 0
     total_llm_calls: int = 0
@@ -76,6 +77,7 @@ class DreamReport:
         return {
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "agent_id": self.agent_id,
             "episodes_consolidated": self.episodes_consolidated,
             "total_llm_calls": self.total_llm_calls,
             "total_duration_seconds": round(self.total_duration_seconds, 2),
@@ -170,6 +172,7 @@ class DreamEngine:
         self._llm = llm_client
         self._llm_calls_remaining = DREAM_MAX_LLM_CALLS
         self._running = False
+        self._agent_id: Optional[str] = None
         self._last_report: Optional[DreamReport] = None
 
     @property
@@ -184,8 +187,13 @@ class DreamEngine:
     # Main cycle
     # =========================================================================
 
-    def run_cycle(self) -> DreamReport:
+    def run_cycle(self, agent_id: Optional[str] = None) -> DreamReport:
         """Run a full dream consolidation cycle (all 6 phases).
+
+        Args:
+            agent_id: If provided, scope all queries to this agent's visible
+                      memories (SHARED + own PRIVATE/THREAD). If None, legacy
+                      unscoped behavior.
 
         Returns:
             DreamReport with details of each phase.
@@ -194,12 +202,14 @@ class DreamEngine:
             raise RuntimeError("Dream cycle already in progress")
 
         self._running = True
+        self._agent_id = agent_id
         self._llm_calls_remaining = DREAM_MAX_LLM_CALLS
-        report = DreamReport()
+        report = DreamReport(agent_id=agent_id)
         cycle_start = time.time()
 
         try:
-            logger.info("Dream cycle starting...")
+            scope_label = f" for agent {agent_id}" if agent_id else ""
+            logger.info(f"Dream cycle starting{scope_label}...")
 
             # Phase 1: SWS Replay (algorithmic)
             report.phases.append(self._phase_sws_replay())
@@ -220,14 +230,14 @@ class DreamEngine:
             report.phases.append(self._phase_rem_recombination())
 
             # Mark episodes consolidated
-            episodes = self._cortex.episodes.get_unconsolidated()
+            episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
             for ep in episodes:
                 self._cortex.episodes.mark_consolidated(ep.id)
             report.episodes_consolidated = len(episodes)
 
             report.success = all(p.success for p in report.phases)
             logger.info(
-                f"Dream cycle complete: {len(report.phases)} phases, "
+                f"Dream cycle complete{scope_label}: {len(report.phases)} phases, "
                 f"{report.episodes_consolidated} episodes consolidated"
             )
 
@@ -237,12 +247,40 @@ class DreamEngine:
 
         finally:
             self._running = False
+            self._agent_id = None
             report.ended_at = datetime.now()
             report.total_duration_seconds = time.time() - cycle_start
             report.total_llm_calls = sum(p.llm_calls for p in report.phases)
             self._last_report = report
 
         return report
+
+    def run_all_agents_cycle(self) -> list[DreamReport]:
+        """Run a scoped dream cycle for each known agent.
+
+        Auto-discovers agents from the registry, falling back to DISTINCT
+        agent_id from memory_nodes. Shared memories participate in every
+        agent's dream cycle.
+
+        Returns:
+            List of DreamReport, one per agent.
+        """
+        agents = self._cortex.graph.list_agents()
+        if agents:
+            agent_ids = [a.id for a in agents]
+        else:
+            rows = self._cortex.graph.conn.execute(
+                "SELECT DISTINCT agent_id FROM memory_nodes"
+            ).fetchall()
+            agent_ids = [r["agent_id"] for r in rows]
+
+        if not agent_ids:
+            return [self.run_cycle()]
+
+        reports = []
+        for aid in agent_ids:
+            reports.append(self.run_cycle(agent_id=aid))
+        return reports
 
     # =========================================================================
     # Phase 1: SWS Replay
@@ -260,7 +298,7 @@ class DreamEngine:
         start = time.time()
 
         try:
-            episodes = self._cortex.episodes.get_unconsolidated()
+            episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
             if not episodes:
                 report.notes = "No unconsolidated episodes"
                 report.duration_seconds = time.time() - start
@@ -284,6 +322,7 @@ class DreamEngine:
                     seed_ids=mem_ids,
                     seed_weights=seed_weights,
                     max_hops=1,
+                    agent_id=self._agent_id,
                 )
 
                 # Strengthen co-activated links (Hebbian learning)
@@ -356,6 +395,7 @@ class DreamEngine:
                         content=pattern["content"],
                         tags=pattern.get("tags", [concept]),
                         derived_from=source_ids or mem_ids[:3],
+                        agent_id=self._agent_id or "CLAUDE",
                     )
                     if proc:
                         total_procedures += 1
@@ -387,7 +427,7 @@ class DreamEngine:
         start = time.time()
 
         try:
-            episodes = self._cortex.episodes.get_unconsolidated()
+            episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
             total_schemas = 0
 
             for ep in episodes:
@@ -427,6 +467,7 @@ class DreamEngine:
                         content=schema_data["content"],
                         source_ids=mem_ids,
                         tags=episode_tags,
+                        agent_id=self._agent_id or "CLAUDE",
                     )
                     if schema:
                         total_schemas += 1
@@ -461,7 +502,7 @@ class DreamEngine:
         start = time.time()
 
         try:
-            episodes = self._cortex.episodes.get_unconsolidated()
+            episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
 
             for ep in episodes:
                 mem_ids = self._cortex.episodes.get_episode_memories(ep.id)
@@ -521,11 +562,15 @@ class DreamEngine:
             # Prune old, low-salience, isolated memories
             pruned = 0
             cutoff = datetime.now() - timedelta(hours=DREAM_PRUNING_MIN_AGE_HOURS)
-            all_ids = self._cortex.graph.get_all_node_ids()
+            all_ids = self._cortex.graph.get_all_node_ids(agent_id=self._agent_id)
 
             for mid in all_ids:
                 node = self._cortex.graph.get_node(mid)
                 if not node:
+                    continue
+
+                # Only prune memories owned by this agent (don't prune shared from other agents)
+                if self._agent_id and node.metadata.agent_id != self._agent_id:
                     continue
 
                 # Only prune sensory layer, low salience
@@ -576,7 +621,7 @@ class DreamEngine:
         start = time.time()
 
         try:
-            all_ids = self._cortex.graph.get_all_node_ids()
+            all_ids = self._cortex.graph.get_all_node_ids(agent_id=self._agent_id)
             if len(all_ids) < 4:
                 report.notes = "Not enough memories for REM recombination"
                 report.duration_seconds = time.time() - start
@@ -744,7 +789,7 @@ class DreamEngine:
         Only returns clusters meeting minimum size.
         """
         concept_map: dict[str, list[str]] = {}
-        all_ids = self._cortex.graph.get_all_node_ids()
+        all_ids = self._cortex.graph.get_all_node_ids(agent_id=self._agent_id)
 
         for mid in all_ids:
             node = self._cortex.graph.get_node(mid)

@@ -288,6 +288,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "episode_id": {"type": "string", "description": "Episode ID to retrieve"},
+                "agent_id": {"type": "string", "description": "Requesting agent (scope check)"},
             },
             "required": ["episode_id"],
         },
@@ -298,6 +299,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "episode_id": {"type": "string", "description": "Episode to get memories from"},
+                "agent_id": {"type": "string", "description": "Requesting agent (scope check)"},
             },
             "required": ["episode_id"],
         },
@@ -1012,7 +1014,7 @@ async def _handle_list_episodes(cortex: CerebroCortex, args: dict) -> list[TextC
 
 
 async def _handle_get_episode(cortex: CerebroCortex, args: dict) -> list[TextContent]:
-    episode = cortex.get_episode(args["episode_id"])
+    episode = cortex.get_episode(args["episode_id"], agent_id=args.get("agent_id"))
     if episode is None:
         return [TextContent(type="text", text=f"Episode not found: {args['episode_id']}")]
 
@@ -1041,7 +1043,7 @@ async def _handle_get_episode(cortex: CerebroCortex, args: dict) -> list[TextCon
 
 
 async def _handle_get_episode_memories(cortex: CerebroCortex, args: dict) -> list[TextContent]:
-    memories = cortex.get_episode_memories(args["episode_id"])
+    memories = cortex.get_episode_memories(args["episode_id"], agent_id=args.get("agent_id"))
     if not memories:
         return [TextContent(type="text", text=f"No memories found for episode: {args['episode_id']}")]
 
@@ -1294,22 +1296,21 @@ async def _handle_dream_run(cortex: CerebroCortex, args: dict) -> list[TextConte
     if dream.is_running:
         return [TextContent(type="text", text="Dream cycle already in progress.")]
 
-    report = dream.run_cycle()
-    phase_summary = ", ".join(
-        f"{p.phase.value}({'ok' if p.success else 'FAIL'})" for p in report.phases
-    )
+    reports = dream.run_all_agents_cycle()
+    lines = [f"**Dream Cycle Complete** ({len(reports)} agent(s))\n"]
+    for report in reports:
+        agent_label = report.agent_id or "unscoped"
+        phase_summary = ", ".join(
+            f"{p.phase.value}({'ok' if p.success else 'FAIL'})" for p in report.phases
+        )
+        lines.append(
+            f"**{agent_label}**: {report.total_duration_seconds:.1f}s, "
+            f"{report.episodes_consolidated} episodes, "
+            f"{report.total_llm_calls} LLM calls, "
+            f"success={report.success}\n  Phases: {phase_summary}"
+        )
 
-    return [TextContent(
-        type="text",
-        text=(
-            f"**Dream Cycle Complete**\n"
-            f"Duration: {report.total_duration_seconds:.1f}s\n"
-            f"Episodes consolidated: {report.episodes_consolidated}\n"
-            f"LLM calls: {report.total_llm_calls}\n"
-            f"Phases: {phase_summary}\n"
-            f"Success: {report.success}"
-        ),
-    )]
+    return [TextContent(type="text", text="\n".join(lines))]
 
 
 async def _handle_dream_status(cortex: CerebroCortex) -> list[TextContent]:
