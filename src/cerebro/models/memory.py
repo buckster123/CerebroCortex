@@ -59,6 +59,7 @@ class MemoryMetadata(BaseModel):
     # Relationships (for thread/agent compatibility)
     responding_to: list[str] = Field(default_factory=list)
     related_agents: list[str] = Field(default_factory=list)
+    recipient: Optional[str] = Field(default=None, description="Target agent for directed messages")
 
     # Emotional dimension (Amygdala)
     valence: EmotionalValence = EmotionalValence.NEUTRAL

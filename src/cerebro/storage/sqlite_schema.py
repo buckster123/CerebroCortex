@@ -7,7 +7,7 @@ and strength parameters. ChromaDB handles vectors; SQLite handles everything els
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 -- Memory nodes (rich metadata + strength state)
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
     concepts_json TEXT NOT NULL DEFAULT '[]',
     responding_to_json TEXT NOT NULL DEFAULT '[]',
     related_agents_json TEXT NOT NULL DEFAULT '[]',
+    recipient TEXT,
 
     -- Source tracking
     source TEXT NOT NULL DEFAULT 'user_input',
@@ -187,5 +188,23 @@ def initialize_database(db_path: Path) -> sqlite3.Connection:
             (SCHEMA_VERSION, "Initial CerebroCortex schema"),
         )
         conn.commit()
+
+    # Migration v3: ensure recipient column + indexes exist.
+    # Runs idempotently on both fresh and existing databases.
+    try:
+        conn.execute("ALTER TABLE memory_nodes ADD COLUMN recipient TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists (fresh DB or already migrated)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_recipient ON memory_nodes(recipient)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_source ON memory_nodes(source)")
+    existing_v3 = conn.execute(
+        "SELECT version FROM schema_version WHERE version = 3"
+    ).fetchone()
+    if not existing_v3:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) "
+            "VALUES (3, datetime('now'), 'Add recipient column for agent messaging')"
+        )
+    conn.commit()
 
     return conn

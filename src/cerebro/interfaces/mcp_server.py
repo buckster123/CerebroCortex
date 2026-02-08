@@ -578,6 +578,34 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
 
     # -----------------------------------------------------------------
+    # Agent Messaging
+    # -----------------------------------------------------------------
+    "send_message": {
+        "description": "Send a message to another agent. Bypasses gating — messages are always delivered. Auto-tags with from/to and links replies. Use to='all' for broadcast.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient agent ID (e.g. 'CLAUDE-HAILO'), or 'all' for broadcast"},
+                "content": {"type": "string", "description": "Message content"},
+                "in_reply_to": {"type": "string", "description": "Memory ID of message being replied to (creates a supports link)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Additional tags"},
+            },
+            "required": ["to", "content"],
+        },
+    },
+    "check_inbox": {
+        "description": "Check for messages from other agents addressed to you. Returns newest first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "from_agent": {"type": "string", "description": "Only show messages from this agent"},
+                "limit": {"type": "integer", "description": "Max messages to return (default: 10)"},
+                "since": {"type": "string", "description": "Only messages after this ISO timestamp (e.g. '2026-02-08T00:00:00')"},
+            },
+        },
+    },
+
+    # -----------------------------------------------------------------
     # Aliases (backward-compatible)
     # -----------------------------------------------------------------
     "memory_store": {
@@ -704,6 +732,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "session_recall":
             return await _handle_session_recall(cortex, arguments)
+
+        # =============================================================
+        # Agent Messaging
+        # =============================================================
+        elif name == "send_message":
+            return await _handle_send_message(cortex, arguments)
+
+        elif name == "check_inbox":
+            return await _handle_check_inbox(cortex, arguments)
 
         # =============================================================
         # Agents
@@ -1534,6 +1571,65 @@ async def _handle_ingest_file(cortex: CerebroCortex, args: dict) -> list[TextCon
         )]
     except Exception as e:
         return [TextContent(type="text", text=f"Failed to ingest {file_path.name}: {e}")]
+
+
+# =============================================================================
+# Agent Messaging handlers
+# =============================================================================
+
+async def _handle_send_message(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    to = args["to"]
+    content = args["content"]
+    in_reply_to = args.get("in_reply_to")
+    tags = args.get("tags", [])
+
+    node = cortex.send_message(
+        to=to,
+        content=content,
+        agent_id=DEFAULT_AGENT_ID,
+        in_reply_to=in_reply_to,
+        tags=tags if tags else None,
+    )
+
+    reply_info = f" (linked to {in_reply_to})" if in_reply_to else ""
+    return [TextContent(
+        type="text",
+        text=(
+            f"Message sent to {to}{reply_info}\n"
+            f"ID: {node.id}\n"
+            f"Tags: {', '.join(node.metadata.tags)}\n"
+            f"Content: {content[:200]}{'...' if len(content) > 200 else ''}"
+        ),
+    )]
+
+
+async def _handle_check_inbox(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    from_agent = args.get("from_agent")
+    limit = args.get("limit", 10)
+    since = args.get("since")
+
+    messages = cortex.check_inbox(
+        agent_id=DEFAULT_AGENT_ID,
+        from_agent=from_agent,
+        limit=limit,
+        since=since,
+    )
+
+    if not messages:
+        filter_info = f" from {from_agent}" if from_agent else ""
+        since_info = f" since {since}" if since else ""
+        return [TextContent(type="text", text=f"No messages{filter_info}{since_info}.")]
+
+    lines = [f"**{len(messages)} message(s):**\n"]
+    for msg in messages:
+        sender = msg.metadata.agent_id
+        ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+        preview = msg.content[:300] + ("..." if len(msg.content) > 300 else "")
+        reply_to = msg.metadata.responding_to
+        reply_info = f" (reply to {reply_to[0]})" if reply_to else ""
+        lines.append(f"---\n**From:** {sender} | **At:** {ts} | **ID:** {msg.id}{reply_info}\n{preview}\n")
+
+    return [TextContent(type="text", text="\n".join(lines))]
 
 
 # =============================================================================

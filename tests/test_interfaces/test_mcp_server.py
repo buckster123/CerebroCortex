@@ -68,7 +68,7 @@ class TestToolSchemas:
             assert schema["input_schema"]["type"] == "object"
 
     def test_tool_count(self):
-        assert len(TOOL_SCHEMAS) == 40
+        assert len(TOOL_SCHEMAS) == 42
 
     def test_backward_compat_tools_exist(self):
         assert "memory_store" in TOOL_SCHEMAS

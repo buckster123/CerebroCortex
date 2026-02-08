@@ -97,6 +97,8 @@ You have access to a persistent memory system via MCP tools. Key tools:
 - `session_recall` — Load previous session notes at startup
 - `store_intention` — Save TODOs and reminders
 - `list_intentions` — Check pending TODOs
+- `send_message` — Send a message to another agent
+- `check_inbox` — Check for messages from other agents
 
 At the start of each session, call `session_recall` to orient yourself.
 Before ending a session, call `session_save` with a summary.
@@ -199,6 +201,13 @@ Settings can be changed without restarting the server. The priority order is:
 | `store_procedure` | Save a workflow or how-to guide |
 | `create_schema` | Record a pattern from multiple memories |
 | `find_relevant_procedures` | Find workflows by topic |
+
+### Agent Messaging
+
+| Tool | What it does |
+|------|-------------|
+| `send_message` | Send a message to another agent (bypasses gating, auto-tags from/to) |
+| `check_inbox` | Check for messages addressed to you (newest first) |
 
 ### System
 

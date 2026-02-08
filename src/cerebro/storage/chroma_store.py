@@ -89,6 +89,7 @@ class ChromaStore(VectorStore):
             "session_id": meta.session_id or "",
             "conversation_thread": meta.conversation_thread or "",
             "source": meta.source,
+            "recipient": meta.recipient or "",
             "created_at": node.created_at.isoformat(),
             "access_count": node.strength.access_count,
         }

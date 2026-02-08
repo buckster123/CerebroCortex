@@ -126,6 +126,7 @@ class GraphStore:
                 valence, arousal, salience,
                 episode_id, session_id, conversation_thread,
                 tags_json, concepts_json, responding_to_json, related_agents_json,
+                recipient,
                 source, derived_from_json, metadata_json,
                 created_at, last_accessed_at, promoted_at
             ) VALUES (
@@ -136,6 +137,7 @@ class GraphStore:
                 ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?, ?,
+                ?,
                 ?, ?, ?,
                 ?, ?, ?
             )""",
@@ -151,6 +153,7 @@ class GraphStore:
                 meta.episode_id, meta.session_id, meta.conversation_thread,
                 json.dumps(meta.tags), json.dumps(meta.concepts),
                 json.dumps(meta.responding_to), json.dumps(meta.related_agents),
+                meta.recipient,
                 meta.source, json.dumps(meta.derived_from), "{}",
                 node.created_at.isoformat(),
                 node.last_accessed_at.isoformat() if node.last_accessed_at else None,
@@ -698,6 +701,7 @@ class GraphStore:
                 episode_id=row["episode_id"],
                 responding_to=json.loads(row["responding_to_json"]),
                 related_agents=json.loads(row["related_agents_json"]),
+                recipient=row["recipient"] if "recipient" in row.keys() else None,
                 valence=row["valence"],
                 arousal=row["arousal"],
                 salience=row["salience"],

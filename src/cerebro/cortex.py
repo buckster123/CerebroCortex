@@ -46,7 +46,7 @@ from cerebro.models.episode import Episode
 from cerebro.models.memory import MemoryNode
 from cerebro.storage.chroma_store import ChromaStore
 from cerebro.storage.graph_store import GraphStore
-from cerebro.types import EmotionalValence, LinkType, MemoryType, Visibility
+from cerebro.types import EmotionalValence, LinkType, MemoryLayer, MemoryType, Visibility
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,141 @@ class CerebroCortex:
             self.episodes.add_to_current_episode(session_id, node.id)
 
         return node
+
+    # =========================================================================
+    # SEND MESSAGE - Direct agent-to-agent communication
+    # =========================================================================
+
+    def send_message(
+        self,
+        to: str,
+        content: str,
+        agent_id: str = DEFAULT_AGENT_ID,
+        in_reply_to: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> MemoryNode:
+        """Send a message to another agent, bypassing the gating engine.
+
+        Messages are always stored (no dedup/noise filter), auto-tagged with
+        from/to, and stored as SEMANTIC in cerebro_knowledge so all agents
+        can find them via recall too.
+
+        Args:
+            to: Recipient agent ID, or "all" for broadcast.
+            content: Message content.
+            agent_id: Sender agent ID.
+            in_reply_to: Memory ID of message being replied to (creates link).
+            tags: Additional tags.
+            session_id: Current session ID.
+
+        Returns:
+            The stored MemoryNode.
+        """
+        from cerebro.models.memory import MemoryMetadata, MemoryNode as MN
+
+        # Auto-tags
+        auto_tags = ["msg", f"from:{agent_id}", f"to:{to}"]
+        if tags:
+            auto_tags.extend(tags)
+
+        # Build node directly — bypass thalamus gating
+        node = MN(
+            content=content,
+            metadata=MemoryMetadata(
+                agent_id=agent_id,
+                visibility=Visibility.SHARED,
+                layer=MemoryLayer.WORKING,
+                memory_type=MemoryType.SEMANTIC,
+                tags=auto_tags,
+                source="agent_message",
+                recipient=to,
+                salience=0.8,
+                session_id=session_id,
+                related_agents=[to],
+                responding_to=[in_reply_to] if in_reply_to else [],
+            ),
+        )
+
+        # Semantic enrichment + affect analysis (but no gating)
+        node = self.semantic.enrich_node(node)
+        node = self.affect.apply_emotion(node)
+
+        # Record first access
+        now = time.time()
+        node = MN(
+            id=node.id,
+            content=node.content,
+            metadata=node.metadata,
+            strength=record_access(node.strength, now),
+            created_at=node.created_at,
+        )
+
+        # Dual-write to graph + vector store
+        self._graph.add_node(node)
+        coll = self._collection_for_type(node.metadata.memory_type)
+        self._chroma.add_node(coll, node)
+
+        # Auto-link
+        self.links.auto_link_on_store(node)
+        self.semantic.create_semantic_links(node)
+
+        # Reply link
+        if in_reply_to and self._graph.get_node(in_reply_to):
+            self._graph.ensure_link(
+                source_id=node.id,
+                target_id=in_reply_to,
+                link_type=LinkType.SUPPORTS,
+                weight=0.8,
+                source="agent_message",
+                evidence=f"Reply from {agent_id} to {to}",
+            )
+
+        return node
+
+    # =========================================================================
+    # CHECK INBOX - Retrieve messages addressed to this agent
+    # =========================================================================
+
+    def check_inbox(
+        self,
+        agent_id: str = DEFAULT_AGENT_ID,
+        from_agent: Optional[str] = None,
+        limit: int = 10,
+        since: Optional[str] = None,
+    ) -> list[MemoryNode]:
+        """Check for messages addressed to this agent.
+
+        Queries SQLite directly by the indexed recipient column.
+
+        Args:
+            agent_id: The agent checking their inbox.
+            from_agent: Only show messages from this sender.
+            limit: Max messages to return.
+            since: Only messages after this ISO timestamp.
+
+        Returns:
+            List of MemoryNodes, newest first.
+        """
+        query = (
+            "SELECT * FROM memory_nodes "
+            "WHERE source='agent_message' AND (recipient=? OR recipient='all')"
+        )
+        params: list = [agent_id]
+
+        if from_agent:
+            query += " AND agent_id=?"
+            params.append(from_agent)
+
+        if since:
+            query += " AND created_at>=?"
+            params.append(since)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._graph.conn.execute(query, params).fetchall()
+        return [self._graph._row_to_memory_node(r) for r in rows]
 
     # =========================================================================
     # RECALL - Search and retrieve memories
