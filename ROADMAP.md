@@ -12,7 +12,7 @@
 |--------|-------|-----------|--------|
 | **1** | Polish & Quick Wins | #9 Reindex, #10 Episode Auto-Close, #8 Contradiction Flagging | `done` |
 | **2** | Recall Quality | #1 Explain Mode, #2 Link Decay | `done` |
-| **3** | Dream Hardening | #7 Schema Validation, #3 Dream Checkpointing | `pending` |
+| **3** | Dream Hardening | #7 Schema Validation, #3 Dream Checkpointing | `done` |
 | **4** | Reliability | #5 Concurrency Locks, #11 Verify/Repair | `pending` |
 | **H** | Hardware Integration | Sensor daemon (BME688, IMX500, MLX90640) | `awaiting hardware` |
 | **I** | Infrastructure | MCP-to-REST shim, dedicated cerebro server | `planned` |
@@ -142,11 +142,11 @@
 - `src/cerebro/types.py` — may need SchemaState enum
 
 **Work:**
-- [ ] New schemas start in WORKING layer (not LONG_TERM)
-- [ ] Track `support_count` in schema metadata tags
-- [ ] Promote to LONG_TERM after: 3+ supporting episodes AND 2+ real recall accesses
-- [ ] Add `evaluate_schema_candidates()` to Dream Engine (run in Phase 3)
-- [ ] Demote/prune schemas with 0 accesses after 3 dream cycles
+- [x] New schemas start in WORKING layer (not LONG_TERM)
+- [x] Track `support_count` in schema metadata tags
+- [x] Promote to LONG_TERM after: 3+ supporting episodes AND 2+ real recall accesses
+- [x] Add `evaluate_schema_candidates()` to Dream Engine (run in Phase 3)
+- [x] Demote/prune schemas with 0 accesses after 3 dream cycles
 
 **Effort:** ~80 lines | **Risk:** Medium (changes Dream behavior)
 
@@ -161,12 +161,12 @@
 - `src/cerebro/storage/sqlite_schema.py` — extend `dream_log`
 
 **Work:**
-- [ ] Add `cycle_id` and `status` columns to dream_log
-- [ ] Before each phase: check if already completed in this cycle
-- [ ] After each phase: log completion with cycle_id
-- [ ] Add `resume_cycle(cycle_id)` that skips completed phases
-- [ ] Add idempotency guards to Phase 2 (dedup procedures) and Phase 3 (dedup schemas)
-- [ ] Expose resume via CLI: `cerebro dream --resume`
+- [x] Add `cycle_id` and `agent_id` columns to dream_log (schema v4)
+- [x] Before each phase: check if already completed in this cycle
+- [x] After each phase: log completion with cycle_id
+- [x] Add `resume_cycle(cycle_id)` that skips completed phases
+- [x] Add idempotency guards to Phase 2 (dedup procedures) and Phase 3 (dedup schemas)
+- [x] Expose resume via CLI: `cerebro dream --resume`
 
 **Effort:** ~120 lines | **Risk:** High (phase dependencies are complex)
 
@@ -263,4 +263,4 @@
 
 ---
 
-*Last updated: 2026-02-10 — Sprints 1-2 complete, Sprint 3 next*
+*Last updated: 2026-02-10 — Sprints 1-3 complete, Sprint 4 next*

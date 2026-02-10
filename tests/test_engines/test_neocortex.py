@@ -23,9 +23,9 @@ class TestSchemaCreation:
         )
 
         assert schema.metadata.memory_type == MemoryType.SCHEMATIC
-        assert schema.metadata.layer == MemoryLayer.LONG_TERM
-        assert schema.metadata.salience == 0.9
-        assert schema.strength.stability == 30.0
+        assert schema.metadata.layer == MemoryLayer.WORKING  # starts in WORKING; earns promotion
+        assert schema.metadata.salience == 0.6  # moderate until validated
+        assert schema.strength.stability == 7.0  # 1 week; promoted schemas get 30d
 
     def test_derived_from_links(self, graph_store):
         engine = SchemaEngine(graph_store)

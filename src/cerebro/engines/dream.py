@@ -22,6 +22,7 @@ import json
 import logging
 import random
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -179,6 +180,7 @@ class DreamEngine:
         self._llm_calls_remaining = DREAM_MAX_LLM_CALLS
         self._running = False
         self._agent_id: Optional[str] = None
+        self._cycle_id: Optional[str] = None
         self._last_report: Optional[DreamReport] = None
         self._last_reports: list[DreamReport] = []
 
@@ -199,13 +201,18 @@ class DreamEngine:
     # Main cycle
     # =========================================================================
 
-    def run_cycle(self, agent_id: Optional[str] = None) -> DreamReport:
+    def run_cycle(
+        self,
+        agent_id: Optional[str] = None,
+        cycle_id: Optional[str] = None,
+    ) -> DreamReport:
         """Run a full dream consolidation cycle (all 6 phases).
 
         Args:
             agent_id: If provided, scope all queries to this agent's visible
                       memories (SHARED + own PRIVATE/THREAD). If None, legacy
                       unscoped behavior.
+            cycle_id: Resume a previous incomplete cycle. If None, starts fresh.
 
         Returns:
             DreamReport with details of each phase.
@@ -216,41 +223,41 @@ class DreamEngine:
         self._running = True
         self._agent_id = agent_id
         self._llm_calls_remaining = DREAM_MAX_LLM_CALLS
+        self._cycle_id = cycle_id or f"dream_{uuid.uuid4().hex[:12]}"
         report = DreamReport(agent_id=agent_id)
         cycle_start = time.time()
 
+        # Check which phases are already done (for resume)
+        completed_phases = self._cortex.graph.get_completed_phases(self._cycle_id)
+        resuming = bool(completed_phases)
+
         try:
             scope_label = f" for agent {agent_id}" if agent_id else ""
-            logger.info(f"Dream cycle starting{scope_label}...")
+            resume_label = f" (resuming {len(completed_phases)} done)" if resuming else ""
+            logger.info(f"Dream cycle {self._cycle_id} starting{scope_label}{resume_label}...")
 
             # Pre-phase: auto-close stale episodes
             closed = self._cortex.episodes.close_stale_episodes()
             if closed:
                 logger.info(f"Dream pre-phase: auto-closed {len(closed)} stale episodes")
 
-            # Phase 1: SWS Replay (algorithmic)
-            report.phases.append(self._phase_sws_replay())
-            self._notify_phase(report.phases[-1])
+            # Ordered phase dispatch table
+            phases = [
+                (DreamPhase.SWS_REPLAY, self._phase_sws_replay),
+                (DreamPhase.PATTERN_EXTRACTION, self._phase_pattern_extraction),
+                (DreamPhase.SCHEMA_FORMATION, self._phase_schema_formation),
+                (DreamPhase.EMOTIONAL_REPROCESSING, self._phase_emotional_reprocessing),
+                (DreamPhase.PRUNING, self._phase_pruning),
+                (DreamPhase.REM_RECOMBINATION, self._phase_rem_recombination),
+            ]
 
-            # Phase 2: Pattern Extraction (LLM-assisted)
-            report.phases.append(self._phase_pattern_extraction())
-            self._notify_phase(report.phases[-1])
-
-            # Phase 3: Schema Formation (LLM-assisted)
-            report.phases.append(self._phase_schema_formation())
-            self._notify_phase(report.phases[-1])
-
-            # Phase 4: Emotional Reprocessing (algorithmic)
-            report.phases.append(self._phase_emotional_reprocessing())
-            self._notify_phase(report.phases[-1])
-
-            # Phase 5: Pruning (algorithmic)
-            report.phases.append(self._phase_pruning())
-            self._notify_phase(report.phases[-1])
-
-            # Phase 6: REM Recombination (LLM-assisted)
-            report.phases.append(self._phase_rem_recombination())
-            self._notify_phase(report.phases[-1])
+            for phase_enum, phase_fn in phases:
+                if phase_enum.value in completed_phases:
+                    logger.info(f"Skipping {phase_enum.value} (already completed in {self._cycle_id})")
+                    continue
+                phase_report = phase_fn()
+                report.phases.append(phase_report)
+                self._notify_phase(phase_report)
 
             # Mark episodes consolidated
             episodes = self._cortex.episodes.get_unconsolidated(agent_id=self._agent_id)
@@ -260,23 +267,38 @@ class DreamEngine:
 
             report.success = all(p.success for p in report.phases)
             logger.info(
-                f"Dream cycle complete{scope_label}: {len(report.phases)} phases, "
+                f"Dream cycle {self._cycle_id} complete{scope_label}: "
+                f"{len(report.phases)} phases run, "
                 f"{report.episodes_consolidated} episodes consolidated"
             )
 
         except Exception as e:
-            logger.error(f"Dream cycle failed: {e}", exc_info=True)
+            logger.error(f"Dream cycle {self._cycle_id} failed: {e}", exc_info=True)
             report.success = False
 
         finally:
             self._running = False
             self._agent_id = None
+            self._cycle_id = None
             report.ended_at = datetime.now()
             report.total_duration_seconds = time.time() - cycle_start
             report.total_llm_calls = sum(p.llm_calls for p in report.phases)
             self._last_report = report
 
         return report
+
+    def resume_cycle(self, agent_id: Optional[str] = None) -> Optional[DreamReport]:
+        """Find and resume the most recent incomplete dream cycle.
+
+        Returns:
+            DreamReport if an incomplete cycle was found and resumed, else None.
+        """
+        cycle_id = self._cortex.graph.get_last_incomplete_cycle(agent_id)
+        if not cycle_id:
+            logger.info("No incomplete dream cycle to resume")
+            return None
+        logger.info(f"Resuming incomplete cycle: {cycle_id}")
+        return self.run_cycle(agent_id=agent_id, cycle_id=cycle_id)
 
     def run_all_agents_cycle(self) -> list[DreamReport]:
         """Run a scoped dream cycle for each known agent.
@@ -420,10 +442,14 @@ class DreamEngine:
                     phase_budget -= 1
                 report.memories_processed += len(mem_ids)
 
-                # Store extracted procedures
+                # Store extracted procedures (with dedup for idempotency on resume)
                 for pattern in patterns:
                     content = pattern.get("content") or pattern.get("pattern") or pattern.get("procedure")
                     if not content:
+                        continue
+
+                    # Idempotency: skip if a procedure with identical content exists
+                    if self._cortex.graph.find_duplicate_content(content):
                         continue
 
                     source_indices = pattern.get("source_indices", [])
@@ -515,8 +541,17 @@ class DreamEngine:
 
                 report.memories_processed += len(mem_ids)
 
+            # Evaluate existing schemas for promotion/demotion
+            eval_result = self._cortex.schemas.evaluate_schema_candidates()
+            promoted = eval_result.get("promoted", 0)
+            demoted = eval_result.get("demoted", 0)
+            report.memories_pruned += demoted
+
             report.schemas_extracted = total_schemas
-            report.notes = f"Formed {total_schemas} schemas from {len(episodes)} episodes"
+            report.notes = (
+                f"Formed {total_schemas} schemas from {len(episodes)} episodes"
+                f", promoted {promoted}, demoted {demoted}"
+            )
 
         except Exception as e:
             logger.error(f"Schema Formation failed: {e}", exc_info=True)
@@ -884,7 +919,7 @@ class DreamEngine:
     # =========================================================================
 
     def _log_phase(self, report: PhaseReport) -> None:
-        """Log a dream phase to SQLite."""
+        """Log a dream phase to SQLite with cycle_id for checkpointing."""
         try:
             self._cortex.graph.log_dream_phase(
                 phase=report.phase.value,
@@ -895,6 +930,8 @@ class DreamEngine:
                 schemas_extracted=report.schemas_extracted,
                 notes=report.notes,
                 success=report.success,
+                cycle_id=self._cycle_id,
+                agent_id=self._agent_id,
             )
         except Exception as e:
             logger.error(f"Failed to log dream phase: {e}")

@@ -882,7 +882,8 @@ def dream():
 
 @dream.command("run")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def dream_run(as_json):
+@click.option("--resume", is_flag=True, help="Resume last incomplete dream cycle")
+def dream_run(as_json, resume):
     """Run a dream consolidation cycle (all 6 phases)."""
     ctx = get_cortex()
 
@@ -895,9 +896,18 @@ def dream_run(as_json):
         click.echo("Warning: No LLM available. LLM-assisted phases will be skipped.", err=True)
 
     engine = DreamEngine(ctx, llm_client=llm)
-    click.echo("Starting dream cycle (per-agent)...")
 
-    reports = engine.run_all_agents_cycle()
+    if resume:
+        click.echo("Attempting to resume last incomplete dream cycle...")
+        report = engine.resume_cycle()
+        if report is None:
+            click.echo("No incomplete cycle found. Starting fresh.")
+            reports = engine.run_all_agents_cycle()
+        else:
+            reports = [report]
+    else:
+        click.echo("Starting dream cycle (per-agent)...")
+        reports = engine.run_all_agents_cycle()
 
     if as_json:
         _json_out([r.to_dict() for r in reports])

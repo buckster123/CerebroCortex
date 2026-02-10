@@ -600,18 +600,51 @@ class GraphStore:
         links_created: int = 0, links_strengthened: int = 0,
         memories_pruned: int = 0, schemas_extracted: int = 0,
         notes: Optional[str] = None, success: bool = True,
+        cycle_id: Optional[str] = None, agent_id: Optional[str] = None,
     ) -> None:
         """Log a dream engine phase execution."""
         self.conn.execute(
             """INSERT INTO dream_log (
-                phase, started_at, completed_at, memories_processed,
-                links_created, links_strengthened, memories_pruned,
-                schemas_extracted, notes, success
-            ) VALUES (?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?, ?, ?)""",
-            (phase, memories_processed, links_created, links_strengthened,
-             memories_pruned, schemas_extracted, notes, int(success)),
+                cycle_id, agent_id, phase, started_at, completed_at,
+                memories_processed, links_created, links_strengthened,
+                memories_pruned, schemas_extracted, notes, success
+            ) VALUES (?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?, ?, ?)""",
+            (cycle_id, agent_id, phase, memories_processed, links_created,
+             links_strengthened, memories_pruned, schemas_extracted, notes, int(success)),
         )
         self.conn.commit()
+
+    def get_completed_phases(self, cycle_id: str) -> set[str]:
+        """Get phases already completed for a given dream cycle."""
+        rows = self.conn.execute(
+            "SELECT phase FROM dream_log WHERE cycle_id = ? AND success = 1",
+            (cycle_id,),
+        ).fetchall()
+        return {r["phase"] for r in rows}
+
+    def get_last_incomplete_cycle(self, agent_id: Optional[str] = None) -> Optional[str]:
+        """Find the most recent cycle_id that didn't complete all 6 phases.
+
+        Returns cycle_id or None if no incomplete cycles exist.
+        """
+        agent_clause = "AND agent_id = ?" if agent_id else ""
+        params: list = []
+        if agent_id:
+            params.append(agent_id)
+
+        rows = self.conn.execute(
+            f"""SELECT cycle_id, COUNT(DISTINCT phase) as phase_count
+                FROM dream_log
+                WHERE cycle_id IS NOT NULL {agent_clause}
+                GROUP BY cycle_id
+                HAVING phase_count < 6
+                ORDER BY MAX(started_at) DESC
+                LIMIT 1""",
+            params,
+        ).fetchall()
+        if rows:
+            return rows[0]["cycle_id"]
+        return None
 
     # =========================================================================
     # Stats

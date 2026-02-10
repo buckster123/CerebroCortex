@@ -144,6 +144,11 @@ DREAM_REM_MIN_CONNECTION_STRENGTH = 0.4
 # Episode auto-close: stale episodes (no episode_end called) are closed automatically
 EPISODE_AUTO_CLOSE_HOURS = 24
 
+# Schema validation: new schemas start in WORKING and must earn promotion
+SCHEMA_PROMOTE_MIN_SUPPORTS = 3    # supporting episodes/memories required
+SCHEMA_PROMOTE_MIN_ACCESSES = 2    # real recall accesses required
+SCHEMA_DEMOTE_MAX_IDLE_CYCLES = 3  # dream cycles with 0 accesses before demotion
+
 # LLM configuration
 LLM_PRIMARY_PROVIDER = "openai_compat"  # "anthropic", "ollama", "openai_compat"
 LLM_PRIMARY_MODEL = "qwen/qwen3-4b-2507"

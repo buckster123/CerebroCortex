@@ -7,7 +7,7 @@ and strength parameters. ChromaDB handles vectors; SQLite handles everything els
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 -- Memory nodes (rich metadata + strength state)
@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS agents (
 -- Dream engine log
 CREATE TABLE IF NOT EXISTS dream_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id TEXT,
+    agent_id TEXT,
     phase TEXT NOT NULL,
     started_at TEXT NOT NULL,
     completed_at TEXT,
@@ -156,6 +158,8 @@ CREATE TABLE IF NOT EXISTS dream_log (
     notes TEXT,
     success INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE INDEX IF NOT EXISTS idx_dream_cycle ON dream_log(cycle_id);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -204,6 +208,26 @@ def initialize_database(db_path: Path) -> sqlite3.Connection:
         conn.execute(
             "INSERT INTO schema_version (version, applied_at, description) "
             "VALUES (3, datetime('now'), 'Add recipient column for agent messaging')"
+        )
+    conn.commit()
+
+    # Migration v4: add cycle_id + agent_id to dream_log for checkpointing
+    try:
+        conn.execute("ALTER TABLE dream_log ADD COLUMN cycle_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE dream_log ADD COLUMN agent_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_dream_cycle ON dream_log(cycle_id)")
+    existing_v4 = conn.execute(
+        "SELECT version FROM schema_version WHERE version = 4"
+    ).fetchone()
+    if not existing_v4:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) "
+            "VALUES (4, datetime('now'), 'Add dream checkpointing columns')"
         )
     conn.commit()
 
