@@ -223,6 +223,11 @@ class DreamEngine:
             scope_label = f" for agent {agent_id}" if agent_id else ""
             logger.info(f"Dream cycle starting{scope_label}...")
 
+            # Pre-phase: auto-close stale episodes
+            closed = self._cortex.episodes.close_stale_episodes()
+            if closed:
+                logger.info(f"Dream pre-phase: auto-closed {len(closed)} stale episodes")
+
             # Phase 1: SWS Replay (algorithmic)
             report.phases.append(self._phase_sws_replay())
             self._notify_phase(report.phases[-1])

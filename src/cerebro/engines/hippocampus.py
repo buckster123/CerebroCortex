@@ -10,13 +10,17 @@ Responsibilities:
 - Episode retrieval by theme or time
 """
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
+from cerebro.config import EPISODE_AUTO_CLOSE_HOURS
 from cerebro.models.episode import Episode, EpisodeStep
 from cerebro.models.memory import MemoryNode
 from cerebro.storage.graph_store import GraphStore
 from cerebro.types import EmotionalValence, LinkType
+
+logger = logging.getLogger("cerebro-episodic")
 
 
 class EpisodicEngine:
@@ -207,3 +211,45 @@ class EpisodicEngine:
                 (limit,),
             ).fetchall()
         return [ep for r in rows if (ep := self._graph.get_episode(r["id"]))]
+
+    def close_stale_episodes(
+        self,
+        max_age_hours: float = EPISODE_AUTO_CLOSE_HOURS,
+    ) -> list[str]:
+        """Auto-close episodes that were never ended and are older than threshold.
+
+        Args:
+            max_age_hours: Maximum age in hours before an open episode is auto-closed.
+
+        Returns:
+            List of episode IDs that were auto-closed.
+        """
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        rows = self._graph.conn.execute(
+            "SELECT id FROM episodes WHERE ended_at IS NULL AND started_at < ?",
+            (cutoff,),
+        ).fetchall()
+
+        closed_ids = []
+        for row in rows:
+            episode_id = row["id"]
+            self._graph.conn.execute(
+                """UPDATE episodes SET
+                    ended_at = ?, overall_valence = COALESCE(overall_valence, 'neutral'),
+                    title = COALESCE(title, '(auto-closed)')
+                WHERE id = ?""",
+                (datetime.now().isoformat(), episode_id),
+            )
+            closed_ids.append(episode_id)
+
+            # Remove from active episodes dict
+            for session_id, ep in list(self._active_episodes.items()):
+                if ep.id == episode_id:
+                    del self._active_episodes[session_id]
+                    break
+
+        if closed_ids:
+            self._graph.conn.commit()
+            logger.info(f"Auto-closed {len(closed_ids)} stale episodes (>{max_age_hours}h old): {closed_ids}")
+
+        return closed_ids

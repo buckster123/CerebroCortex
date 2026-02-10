@@ -566,6 +566,33 @@ class CerebroCortex:
         return results
 
     # =========================================================================
+    # CONTRADICTION DETECTION
+    # =========================================================================
+
+    def get_contradictions(self, memory_id: str) -> list[str]:
+        """Get IDs of memories that contradict a given memory."""
+        neighbors = self._graph.get_neighbors(
+            memory_id, link_types=[LinkType.CONTRADICTS],
+        )
+        return [nid for nid, _weight, _lt in neighbors]
+
+    def find_contradictions_in_set(self, memory_ids: list[str]) -> dict[str, list[str]]:
+        """Find contradiction links among a set of memory IDs.
+
+        Returns:
+            Dict mapping memory_id -> list of contradicting memory_ids within the set.
+            Only includes entries where contradictions exist.
+        """
+        id_set = set(memory_ids)
+        contradictions: dict[str, list[str]] = {}
+        for mid in memory_ids:
+            contra_ids = self.get_contradictions(mid)
+            overlapping = [cid for cid in contra_ids if cid in id_set]
+            if overlapping:
+                contradictions[mid] = overlapping
+        return contradictions
+
+    # =========================================================================
     # ASSOCIATE - Create explicit links
     # =========================================================================
 
@@ -965,24 +992,40 @@ class CerebroCortex:
             "initialized": self._initialized,
         }
 
-    def backfill_vector_store(self) -> dict[str, int]:
+    def backfill_vector_store(self, reindex_all: bool = False) -> dict[str, int]:
         """Backfill ChromaDB from GraphStore for memories missing from vector search.
 
         Reads all nodes from SQLite, checks which are missing from ChromaDB,
         and inserts them. Returns counts by collection.
+
+        Args:
+            reindex_all: If True, delete all vectors from ChromaDB and re-embed
+                         every memory from SQLite. Use after changing embedding model.
         """
         if not self._initialized:
             raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
         all_ids = self._graph.get_all_node_ids()
-        existing: set[str] = set()
-        for coll_name in ALL_COLLECTIONS:
-            for rec in self._chroma.get(coll_name, all_ids):
-                existing.add(rec["id"])
 
-        missing_ids = [nid for nid in all_ids if nid not in existing]
-        if not missing_ids:
-            logger.info("Backfill: all memories already in vector store")
-            return {"total": 0}
+        if reindex_all:
+            # Delete all existing vectors and re-embed from scratch
+            logger.info(f"Reindex: deleting all vectors from {len(ALL_COLLECTIONS)} collections...")
+            for coll_name in ALL_COLLECTIONS:
+                existing_recs = self._chroma.get(coll_name, all_ids)
+                existing_ids = [r["id"] for r in existing_recs]
+                if existing_ids:
+                    self._chroma.delete(coll_name, existing_ids)
+            missing_ids = all_ids
+            logger.info(f"Reindex: re-embedding {len(missing_ids)} memories...")
+        else:
+            existing: set[str] = set()
+            for coll_name in ALL_COLLECTIONS:
+                for rec in self._chroma.get(coll_name, all_ids):
+                    existing.add(rec["id"])
+
+            missing_ids = [nid for nid in all_ids if nid not in existing]
+            if not missing_ids:
+                logger.info("Backfill: all memories already in vector store")
+                return {"total": 0}
 
         counts: dict[str, int] = {}
         errors = 0
@@ -999,5 +1042,6 @@ class CerebroCortex:
                 errors += 1
 
         total = sum(counts.values())
-        logger.info(f"Backfill complete: {total} memories added, {errors} errors")
+        action = "Reindex" if reindex_all else "Backfill"
+        logger.info(f"{action} complete: {total} memories added, {errors} errors")
         return {**counts, "total": total, "errors": errors}

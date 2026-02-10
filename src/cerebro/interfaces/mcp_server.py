@@ -908,6 +908,19 @@ async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]
             f"{content_preview}"
         )
 
+    # Check for contradictions among results
+    result_ids = [node.id for node, _ in results]
+    contradictions = cortex.find_contradictions_in_set(result_ids)
+    if contradictions:
+        lines.append("\n**Contradictions detected:**")
+        seen_pairs: set[tuple[str, str]] = set()
+        for mid, contra_ids in contradictions.items():
+            for cid in contra_ids:
+                pair = tuple(sorted([mid, cid]))
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    lines.append(f"  - {pair[0][:12]}... contradicts {pair[1][:12]}...")
+
     return [TextContent(type="text", text="\n".join(lines))]
 
 
@@ -1182,9 +1195,13 @@ async def _handle_session_save(cortex: CerebroCortex, args: dict) -> list[TextCo
     if node is None:
         return [TextContent(type="text", text="Failed to save session note (duplicate?).")]
 
+    # Auto-close stale episodes on session boundary
+    closed = cortex.episodes.close_stale_episodes()
+    extra = f", auto-closed {len(closed)} stale episodes" if closed else ""
+
     return [TextContent(
         type="text",
-        text=f"Session note saved (ID: {node.id}, priority: {priority})",
+        text=f"Session note saved (ID: {node.id}, priority: {priority}{extra})",
     )]
 
 

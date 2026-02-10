@@ -835,17 +835,24 @@ def health(as_json):
 
 
 @cli.command()
+@click.option("--reindex-all", is_flag=True, help="Delete all vectors and re-embed from SQLite (use after changing embedding model)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def backfill(as_json):
+def backfill(reindex_all, as_json):
     """Backfill ChromaDB vector store from GraphStore.
 
     Finds memories that exist in SQLite/igraph but are missing from
     ChromaDB and inserts them. Safe to run multiple times.
+
+    Use --reindex-all to delete all vectors and re-embed everything
+    from SQLite content (e.g. after switching embedding models).
     """
     ctx = get_cortex()
     if not as_json:
-        click.echo("Scanning for memories missing from vector store...")
-    result = ctx.backfill_vector_store()
+        if reindex_all:
+            click.echo("Reindexing: deleting all vectors and re-embedding from SQLite...")
+        else:
+            click.echo("Scanning for memories missing from vector store...")
+    result = ctx.backfill_vector_store(reindex_all=reindex_all)
     if as_json:
         _json_out(result)
     else:
@@ -854,7 +861,8 @@ def backfill(as_json):
         if total == 0:
             click.echo("All memories already in vector store — nothing to do.")
         else:
-            click.echo(f"Backfilled {total} memories into ChromaDB:")
+            action = "Reindexed" if reindex_all else "Backfilled"
+            click.echo(f"{action} {total} memories into ChromaDB:")
             for k, v in result.items():
                 if k not in ("total", "errors"):
                     click.echo(f"  {k}: {v}")

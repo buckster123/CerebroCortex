@@ -138,6 +138,9 @@ DREAM_REM_SAMPLE_SIZE = 20
 DREAM_REM_PAIR_CHECKS = 10
 DREAM_REM_MIN_CONNECTION_STRENGTH = 0.4
 
+# Episode auto-close: stale episodes (no episode_end called) are closed automatically
+EPISODE_AUTO_CLOSE_HOURS = 24
+
 # LLM configuration
 LLM_PRIMARY_PROVIDER = "openai_compat"  # "anthropic", "ollama", "openai_compat"
 LLM_PRIMARY_MODEL = "qwen/qwen3-4b-2507"
