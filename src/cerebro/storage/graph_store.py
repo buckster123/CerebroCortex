@@ -79,12 +79,13 @@ class GraphStore:
 
         # Load all edges
         edges = self.conn.execute(
-            "SELECT source_id, target_id, link_type, weight FROM associative_links"
+            "SELECT source_id, target_id, link_type, weight, last_activated FROM associative_links"
         ).fetchall()
         if edges:
             edge_list = []
             edge_types = []
             edge_weights = []
+            edge_last_activated = []
             for e in edges:
                 src_idx = self._id_to_vertex.get(e["source_id"])
                 tgt_idx = self._id_to_vertex.get(e["target_id"])
@@ -92,10 +93,12 @@ class GraphStore:
                     edge_list.append((src_idx, tgt_idx))
                     edge_types.append(e["link_type"])
                     edge_weights.append(e["weight"])
+                    edge_last_activated.append(e["last_activated"])
             if edge_list:
                 g.add_edges(edge_list)
                 g.es["link_type"] = edge_types
                 g.es["weight"] = edge_weights
+                g.es["last_activated"] = edge_last_activated
 
         self._graph = g
 
@@ -318,8 +321,11 @@ class GraphStore:
                 new_eid = self.graph.ecount() - 1
                 self.graph.es[new_eid]["link_type"] = link.link_type.value
                 self.graph.es[new_eid]["weight"] = link.weight
+                self.graph.es[new_eid]["last_activated"] = link.last_activated.isoformat() if link.last_activated else None
             else:
                 self.graph.es[eid]["weight"] = max(self.graph.es[eid]["weight"], link.weight)
+                from datetime import datetime
+                self.graph.es[eid]["last_activated"] = datetime.now().isoformat()
 
         return link.id
 
@@ -398,6 +404,8 @@ class GraphStore:
             eid = self.graph.get_eid(src_idx, tgt_idx, error=False)
             if eid != -1:
                 self.graph.es[eid]["weight"] = min(self.graph.es[eid]["weight"] + boost, 1.0)
+                from datetime import datetime
+                self.graph.es[eid]["last_activated"] = datetime.now().isoformat()
 
     def get_neighbors(
         self,
@@ -405,10 +413,10 @@ class GraphStore:
         link_types: Optional[list[LinkType]] = None,
         min_weight: float = 0.0,
         direction: str = "all",
-    ) -> list[tuple[str, float, str]]:
+    ) -> list[tuple[str, float, str, Optional[str]]]:
         """Get neighbors of a node via igraph (fast C-speed).
 
-        Returns: [(neighbor_id, weight, link_type), ...]
+        Returns: [(neighbor_id, weight, link_type, last_activated_iso), ...]
         """
         vertex_idx = self._id_to_vertex.get(node_id)
         if vertex_idx is None:
@@ -439,7 +447,8 @@ class GraphStore:
             neighbor_v = target_v if source_v == vertex_idx else source_v
             neighbor_id = self._vertex_to_id.get(neighbor_v)
             if neighbor_id:
-                neighbors.append((neighbor_id, weight, link_type))
+                last_activated = edge["last_activated"] if "last_activated" in edge.attributes() else None
+                neighbors.append((neighbor_id, weight, link_type, last_activated))
 
         return neighbors
 

@@ -134,6 +134,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "description": "IDs of related memories to boost in results",
                 },
                 "conversation_thread": {"type": "string", "description": "Thread ID for scoping results to a conversation"},
+                "explain": {"type": "boolean", "description": "If true, return detailed score breakdown for each result (vector similarity, ACT-R activation, FSRS retrievability, salience)"},
             },
             "required": ["query"],
         },
@@ -886,6 +887,8 @@ async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]
     if "memory_types" in args:
         memory_types = [MemoryType(t) for t in args["memory_types"]]
 
+    explain = args.get("explain", False)
+
     results = cortex.recall(
         query=args["query"],
         top_k=args.get("top_k", args.get("n_results", 10)),
@@ -894,22 +897,37 @@ async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]
         min_salience=args.get("min_salience", 0.0),
         context_ids=args.get("context_ids"),
         conversation_thread=args.get("conversation_thread"),
+        explain=explain,
     )
 
     if not results:
         return [TextContent(type="text", text="No memories found.")]
 
     lines = [f"**Found {len(results)} memories:**\n"]
-    for i, (node, score) in enumerate(results, 1):
+    for i, entry in enumerate(results, 1):
+        node, score = entry[0], entry[1]
+        explanation = entry[2] if explain and len(entry) > 2 else None
+
         content_preview = node.content[:150] + "..." if len(node.content) > 150 else node.content
         lines.append(
             f"{i}. [{node.metadata.memory_type.value}] (score: {score:.3f}, "
             f"salience: {node.metadata.salience:.2f}) "
             f"{content_preview}"
         )
+        if explanation:
+            lines.append(
+                f"   | vector={explanation['vector_similarity']:.3f} "
+                f"activation={explanation['actr_activation_score']:.3f} "
+                f"retrievability={explanation['fsrs_retrievability']:.3f} "
+                f"salience={explanation['salience']:.3f} "
+                f"| layer={explanation['layer']} "
+                f"accesses={explanation['access_count']} "
+                f"age={explanation['age_hours']:.0f}h "
+                f"stability={explanation['fsrs_stability_days']}d"
+            )
 
     # Check for contradictions among results
-    result_ids = [node.id for node, _ in results]
+    result_ids = [entry[0].id for entry in results]
     contradictions = cortex.find_contradictions_in_set(result_ids)
     if contradictions:
         lines.append("\n**Contradictions detected:**")
@@ -1347,7 +1365,7 @@ async def _handle_neighbors(cortex: CerebroCortex, args: dict) -> list[TextConte
         return [TextContent(type="text", text=f"No neighbors found for {memory_id}.")]
 
     lines = [f"**Neighbors of {memory_id}:**\n"]
-    for neighbor_id, weight, link_type in neighbors:
+    for neighbor_id, weight, link_type, *_ in neighbors:
         node = cortex.graph.get_node(neighbor_id)
         content_preview = node.content[:80] if node else "?"
         lines.append(f"  --[{link_type} w={weight:.2f}]--> {neighbor_id}: {content_preview}")

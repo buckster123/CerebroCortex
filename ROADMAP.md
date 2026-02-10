@@ -11,7 +11,7 @@
 | Sprint | Theme | Proposals | Status |
 |--------|-------|-----------|--------|
 | **1** | Polish & Quick Wins | #9 Reindex, #10 Episode Auto-Close, #8 Contradiction Flagging | `done` |
-| **2** | Recall Quality | #1 Explain Mode, #2 Link Decay | `pending` |
+| **2** | Recall Quality | #1 Explain Mode, #2 Link Decay | `done` |
 | **3** | Dream Hardening | #7 Schema Validation, #3 Dream Checkpointing | `pending` |
 | **4** | Reliability | #5 Concurrency Locks, #11 Verify/Repair | `pending` |
 | **H** | Hardware Integration | Sensor daemon (BME688, IMX500, MLX90640) | `awaiting hardware` |
@@ -100,11 +100,11 @@
 - `src/cerebro/interfaces/mcp_server.py` — expose via `explain` parameter
 
 **Work:**
-- [ ] Create `RecallExplanation` dataclass with score breakdown
-- [ ] Modify `combined_recall_score()` to optionally return component dict
-- [ ] Add `explain=False` parameter to `recall()`
-- [ ] When explain=True, return `list[tuple[MemoryNode, float, RecallExplanation]]`
-- [ ] Expose in MCP `recall` tool and REST `/recall` endpoint
+- [x] Create `RecallExplanation` dataclass with score breakdown
+- [x] Modify `combined_recall_score()` to optionally return component dict
+- [x] Add `explain=False` parameter to `recall()`
+- [x] When explain=True, return `list[tuple[MemoryNode, float, RecallExplanation]]`
+- [x] Expose in MCP `recall` tool and REST `/recall` endpoint
 
 **Effort:** ~60 lines | **Risk:** Low (additive, no breaking changes)
 
@@ -120,11 +120,11 @@
 - `src/cerebro/config.py` — add `LINK_DECAY_HALFLIFE_DAYS`
 
 **Work:**
-- [ ] Add `LINK_DECAY_HALFLIFE_DAYS = 30` to config.py
-- [ ] Add `effective_weight(link, now)` function using FSRS-style curve
-- [ ] Apply in spreading activation when reading neighbor weights
-- [ ] Compute on-the-fly (don't mutate stored weights — Hebbian strengthening handles that)
-- [ ] Test: old untouched links should spread less than fresh active ones
+- [x] Add `LINK_DECAY_HALFLIFE_DAYS = 30` to config.py
+- [x] Add `effective_weight(link, now)` function using FSRS-style curve
+- [x] Apply in spreading activation when reading neighbor weights
+- [x] Compute on-the-fly (don't mutate stored weights — Hebbian strengthening handles that)
+- [x] Test: old untouched links should spread less than fresh active ones
 
 **Effort:** ~40 lines | **Risk:** Medium (affects recall quality — needs tuning)
 
@@ -263,4 +263,4 @@
 
 ---
 
-*Last updated: 2026-02-10 — Sprint 1 complete, Sprint 2 next*
+*Last updated: 2026-02-10 — Sprints 1-2 complete, Sprint 3 next*

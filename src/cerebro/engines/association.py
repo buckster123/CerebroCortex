@@ -212,7 +212,7 @@ class LinkEngine:
         node_id: str,
         link_types: Optional[list[LinkType]] = None,
         min_weight: float = 0.0,
-    ) -> list[tuple[str, float, str]]:
+    ) -> list[tuple]:
         """Get neighbors of a memory with optional filtering."""
         return self._graph.get_neighbors(
             node_id, link_types=link_types, min_weight=min_weight,
@@ -226,7 +226,7 @@ class LinkEngine:
         self,
         node_id: str,
         top_n: int = 10,
-    ) -> list[tuple[str, float, str]]:
+    ) -> list[tuple]:
         """Get the N strongest connections for a memory."""
         neighbors = self._graph.get_neighbors(node_id)
         neighbors.sort(key=lambda x: x[1], reverse=True)

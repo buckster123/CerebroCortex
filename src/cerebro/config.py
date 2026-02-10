@@ -80,6 +80,9 @@ SPREADING_DECAY_PER_HOP = 0.6
 SPREADING_ACTIVATION_THRESHOLD = 0.05
 SPREADING_MAX_ACTIVATED = 50
 
+# Link decay: old untouched links spread less activation than fresh active ones
+LINK_DECAY_HALFLIFE_DAYS = 30  # Links lose ~50% effective weight after this many days without traversal
+
 # Link type weights for spreading activation relevance
 LINK_TYPE_WEIGHTS: dict[LinkType, float] = {
     LinkType.TEMPORAL: 0.6,

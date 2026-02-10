@@ -9,9 +9,11 @@ Implements Collins & Loftus style spreading activation:
 This runs on igraph for C-speed graph traversal.
 """
 
+from datetime import datetime
 from typing import Optional
 
 from cerebro.config import (
+    LINK_DECAY_HALFLIFE_DAYS,
     LINK_TYPE_WEIGHTS,
     SPREADING_ACTIVATION_THRESHOLD,
     SPREADING_DECAY_PER_HOP,
@@ -20,6 +22,36 @@ from cerebro.config import (
 )
 from cerebro.storage.graph_store import GraphStore
 from cerebro.types import LinkType, Visibility
+
+
+def effective_link_weight(
+    stored_weight: float,
+    last_activated: Optional[datetime],
+    halflife_days: float = LINK_DECAY_HALFLIFE_DAYS,
+) -> float:
+    """Apply time decay to a link weight based on when it was last activated.
+
+    Uses an FSRS-style power-law curve: w_eff = w * (1 + age/9H)^{-1}
+    where H is the halflife. This decays slowly at first, then faster.
+
+    Computed on-the-fly — stored weights are not mutated (Hebbian
+    strengthening handles that separately).
+
+    Args:
+        stored_weight: The link's stored weight [0, 1]
+        last_activated: When the link was last traversed/activated
+        halflife_days: Days until ~50% decay
+
+    Returns:
+        Effective weight after time decay [0, stored_weight]
+    """
+    if last_activated is None or halflife_days <= 0:
+        return stored_weight
+    age_days = (datetime.now() - last_activated).total_seconds() / 86400.0
+    if age_days <= 0:
+        return stored_weight
+    decay = (1.0 + age_days / (9.0 * halflife_days)) ** (-1.0)
+    return stored_weight * decay
 
 
 def _build_visibility_cache(
@@ -128,16 +160,16 @@ def spreading_activation(
 
         # Collect all neighbor IDs for this hop for batch visibility lookup
         all_neighbor_ids: set[str] = set()
-        frontier_neighbors: dict[str, list[tuple[str, float, str]]] = {}
+        frontier_neighbors: dict[str, list[tuple]] = {}
         for node_id in frontier:
             source_activation = activated.get(node_id, 0.0)
             if source_activation < activation_threshold:
                 continue
             neighbors = graph.get_neighbors(node_id)
             frontier_neighbors[node_id] = neighbors
-            for nid, _, _ in neighbors:
-                if nid not in vis_cache:
-                    all_neighbor_ids.add(nid)
+            for n in neighbors:
+                if n[0] not in vis_cache:
+                    all_neighbor_ids.add(n[0])
 
         # Batch-fetch visibility for new neighbor IDs
         if agent_id is not None and all_neighbor_ids:
@@ -146,7 +178,12 @@ def spreading_activation(
         for node_id, neighbors in frontier_neighbors.items():
             source_activation = activated.get(node_id, 0.0)
 
-            for neighbor_id, link_weight, link_type_str in neighbors:
+            for neighbor_entry in neighbors:
+                neighbor_id = neighbor_entry[0]
+                link_weight = neighbor_entry[1]
+                link_type_str = neighbor_entry[2]
+                last_activated_iso = neighbor_entry[3] if len(neighbor_entry) > 3 else None
+
                 # Scope check: skip inaccessible neighbors
                 if not _check_access(vis_cache, neighbor_id, agent_id, conversation_thread):
                     continue
@@ -158,8 +195,17 @@ def spreading_activation(
                 except ValueError:
                     type_weight = 0.5
 
+                # Apply link decay based on last activation time
+                last_act_dt = None
+                if last_activated_iso:
+                    try:
+                        last_act_dt = datetime.fromisoformat(last_activated_iso)
+                    except (ValueError, TypeError):
+                        pass
+                decayed_weight = effective_link_weight(link_weight, last_act_dt)
+
                 # Compute spread amount
-                spread = source_activation * link_weight * type_weight * hop_decay
+                spread = source_activation * decayed_weight * type_weight * hop_decay
 
                 if spread < activation_threshold:
                     continue

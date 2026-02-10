@@ -982,7 +982,7 @@ async def graph_neighbors(
                 "link_type": lt,
                 "content": (ctx.graph.get_node(nid).content[:200] if ctx.graph.get_node(nid) else ""),
             }
-            for nid, w, lt in neighbors
+            for nid, w, lt, *_ in neighbors
         ],
     }
 

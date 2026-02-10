@@ -144,16 +144,19 @@ class ExecutiveEngine:
         memory_ids: list[str],
         vector_similarities: Optional[dict[str, float]] = None,
         associative_scores: Optional[dict[str, float]] = None,
-    ) -> list[tuple[str, float]]:
+        explain: bool = False,
+    ) -> list[tuple]:
         """Rank a set of memory IDs by combined recall score.
 
         Args:
             memory_ids: Candidate memory IDs to rank
             vector_similarities: Optional vector similarity scores per ID
             associative_scores: Optional spreading activation scores per ID
+            explain: If True, include score breakdown dicts in results
 
         Returns:
-            Sorted list of (memory_id, score) from highest to lowest.
+            Sorted list of (memory_id, score) or (memory_id, score, explanation)
+            from highest to lowest.
         """
         now = time.time()
         scored = []
@@ -170,6 +173,9 @@ class ExecutiveEngine:
             base_level = compute_current_activation(node.strength, now)
             r = compute_current_retrievability(node.strength, now)
 
+            from cerebro.activation.strength import recall_probability
+            activation_score = recall_probability(base_level + assoc)
+
             score = combined_recall_score(
                 vector_similarity=vector_sim,
                 base_level=base_level,
@@ -177,7 +183,25 @@ class ExecutiveEngine:
                 fsrs_retrievability=r,
                 salience=node.metadata.salience,
             )
-            scored.append((mid, score))
+
+            if explain:
+                explanation = {
+                    "memory_id": mid,
+                    "composite_score": round(score, 4),
+                    "vector_similarity": round(vector_sim, 4),
+                    "actr_base_level": round(base_level, 4) if base_level != float("-inf") else None,
+                    "actr_activation_score": round(activation_score, 4),
+                    "spreading_activation": round(assoc, 4),
+                    "fsrs_retrievability": round(r, 4),
+                    "fsrs_stability_days": round(node.strength.stability, 2),
+                    "salience": round(node.metadata.salience, 4),
+                    "layer": node.metadata.layer.value,
+                    "access_count": node.strength.access_count,
+                    "age_hours": round((now - node.created_at.timestamp()) / 3600, 1),
+                }
+                scored.append((mid, score, explanation))
+            else:
+                scored.append((mid, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored

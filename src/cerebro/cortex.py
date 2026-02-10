@@ -458,7 +458,8 @@ class CerebroCortex:
         min_salience: float = 0.0,
         context_ids: Optional[list[str]] = None,
         conversation_thread: Optional[str] = None,
-    ) -> list[tuple[MemoryNode, float]]:
+        explain: bool = False,
+    ) -> list[tuple]:
         """Recall memories through the full retrieval pipeline.
 
         Pipeline:
@@ -476,9 +477,11 @@ class CerebroCortex:
             min_salience: Minimum salience threshold
             context_ids: Memory IDs to use as activation seeds
             conversation_thread: Thread ID for THREAD-visibility matching
+            explain: If True, return (MemoryNode, score, explanation_dict) tuples
 
         Returns:
-            List of (MemoryNode, score) tuples, sorted by score descending.
+            List of (MemoryNode, score) or (MemoryNode, score, dict) tuples,
+            sorted by score descending.
         """
         # 1. Vector search across all ChromaDB collections
         where_filter = self._build_where_filter(
@@ -543,25 +546,30 @@ class CerebroCortex:
             memory_ids=filtered_ids,
             vector_similarities=vector_results,
             associative_scores=activated,
+            explain=explain,
         )
 
         # Take top_k
         top_results = ranked[:top_k]
 
         # 5. Hebbian strengthening of co-activated memories
-        result_ids = [mid for mid, _ in top_results]
+        result_ids = [r[0] for r in top_results]
         if len(result_ids) > 1:
             self.links.strengthen_co_activated(result_ids)
 
         # 6. Update access timestamps for recalled memories
         now = time.time()
         results = []
-        for mid, score in top_results:
+        for entry in top_results:
+            mid, score = entry[0], entry[1]
             node = self._graph.get_node(mid)
             if node:
                 new_strength = record_access(node.strength, now)
                 self._graph.update_node_strength(mid, new_strength)
-                results.append((node, score))
+                if explain and len(entry) > 2:
+                    results.append((node, score, entry[2]))
+                else:
+                    results.append((node, score))
 
         return results
 
@@ -574,7 +582,7 @@ class CerebroCortex:
         neighbors = self._graph.get_neighbors(
             memory_id, link_types=[LinkType.CONTRADICTS],
         )
-        return [nid for nid, _weight, _lt in neighbors]
+        return [nid for nid, _weight, _lt, *_ in neighbors]
 
     def find_contradictions_in_set(self, memory_ids: list[str]) -> dict[str, list[str]]:
         """Find contradiction links among a set of memory IDs.
