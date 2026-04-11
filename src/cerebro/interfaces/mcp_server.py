@@ -77,6 +77,31 @@ def get_dream_engine(cortex: CerebroCortex):
     return _dream_engine
 
 
+def _coerce_array(val) -> list | None:
+    """Handle array params that some MCP bridges serialize as JSON strings.
+
+    Some MCP clients (e.g. Hermes) encode array arguments as JSON strings
+    like '["a","b"]' instead of native arrays. This function normalises
+    the value so handler code always receives a plain Python list (or None).
+    """
+    if val is None:
+        return None
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        stripped = val.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [val]
+    return [val]
+
+
 # =============================================================================
 # Tool Schemas
 # =============================================================================
@@ -96,7 +121,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "enum": ["episodic", "semantic", "procedural", "affective", "prospective", "schematic"],
                     "description": "Memory type (auto-classified if omitted)",
                 },
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags for categorization"},
                 "salience": {"type": "number", "description": "Importance 0-1 (auto-estimated if omitted)"},
                 "agent_id": {"type": "string", "description": "Agent storing this memory"},
                 "session_id": {"type": "string", "description": "Current session ID"},
@@ -106,8 +131,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "description": "Who can see this: 'private' (only you), 'shared' (all agents), 'thread' (same conversation)",
                 },
                 "context_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                    "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
                     "description": "IDs of related memories to link to",
                 },
             },
@@ -122,15 +146,13 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "query": {"type": "string", "description": "Search query text"},
                 "top_k": {"type": "integer", "description": "Max results (default: 10)"},
                 "memory_types": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["episodic", "semantic", "procedural", "affective", "prospective", "schematic"]},
+                    "anyOf": [{"type": "array", "items": {"type": "string", "enum": ["episodic", "semantic", "procedural", "affective", "prospective", "schematic"]}}, {"type": "string"}],
                     "description": "Filter by memory type",
                 },
                 "agent_id": {"type": "string", "description": "Filter by agent"},
                 "min_salience": {"type": "number", "description": "Minimum importance threshold"},
                 "context_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                    "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
                     "description": "IDs of related memories to boost in results",
                 },
                 "conversation_thread": {"type": "string", "description": "Thread ID for scoping results to a conversation"},
@@ -190,7 +212,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "properties": {
                 "memory_id": {"type": "string", "description": "Memory ID to update"},
                 "content": {"type": "string", "description": "New content (updates search index)"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "New tags (replaces existing)"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "New tags (replaces existing)"},
                 "salience": {"type": "number", "description": "New importance 0-1"},
                 "visibility": {
                     "type": "string",
@@ -231,7 +253,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "title": {"type": "string", "description": "Episode title"},
                 "session_id": {"type": "string", "description": "Session this episode belongs to"},
                 "agent_id": {"type": "string", "description": "Agent recording the episode"},
-                "tags": {"type": "array", "items": {"type": "string"}},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}
             },
             "required": [],
         },
@@ -311,7 +333,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The TODO or reminder content"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags for categorization"},
                 "agent_id": {"type": "string", "description": "Agent storing this intention"},
                 "salience": {"type": "number", "description": "Importance 0-1 (default: 0.7)"},
             },
@@ -349,9 +371,9 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "session_summary": {"type": "string", "description": "What happened this session"},
-                "key_discoveries": {"type": "array", "items": {"type": "string"}, "description": "Important findings"},
-                "unfinished_business": {"type": "array", "items": {"type": "string"}, "description": "Tasks to continue"},
-                "if_disoriented": {"type": "array", "items": {"type": "string"}, "description": "Orientation instructions for future sessions"},
+                "key_discoveries": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Important findings"},
+                "unfinished_business": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tasks to continue"},
+                "if_disoriented": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Orientation instructions for future sessions"},
                 "priority": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
                 "session_type": {"type": "string", "enum": ["orientation", "technical", "emotional", "task"]},
             },
@@ -473,8 +495,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The pattern or principle to record"},
-                "source_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of the memories this pattern is derived from"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "source_ids": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "IDs of the memories this pattern is derived from"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags for categorization"},
                 "agent_id": {"type": "string", "description": "Agent creating this schema"},
             },
             "required": ["content", "source_ids"],
@@ -495,8 +517,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "input_schema": {
             "type": "object",
             "properties": {
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to match"},
-                "concepts": {"type": "array", "items": {"type": "string"}, "description": "Concepts to match"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags to match"},
+                "concepts": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Concepts to match"}
             },
             "required": [],
         },
@@ -517,8 +539,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The workflow or how-to content"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
-                "derived_from": {"type": "array", "items": {"type": "string"}, "description": "IDs of memories this procedure is derived from"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags for categorization"},
+                "derived_from": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "IDs of memories this procedure is derived from"},
                 "agent_id": {"type": "string", "description": "Agent storing this procedure"},
             },
             "required": ["content"],
@@ -540,8 +562,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "input_schema": {
             "type": "object",
             "properties": {
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to match"},
-                "concepts": {"type": "array", "items": {"type": "string"}, "description": "Concepts to match"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags to match"},
+                "concepts": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Concepts to match"}
             },
             "required": [],
         },
@@ -571,7 +593,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "type": "object",
             "properties": {
                 "file_path": {"type": "string", "description": "Absolute path to the file"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to apply to all imported memories"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags to apply to all imported memories"},
                 "agent_id": {"type": "string", "description": "Agent performing the import"},
             },
             "required": ["file_path"],
@@ -589,7 +611,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "to": {"type": "string", "description": "Recipient agent ID (e.g. 'CLAUDE-HAILO'), or 'all' for broadcast"},
                 "content": {"type": "string", "description": "Message content"},
                 "in_reply_to": {"type": "string", "description": "Memory ID of message being replied to (creates a supports link)"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Additional tags"},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Additional tags"}
             },
             "required": ["to", "content"],
         },
@@ -617,10 +639,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "content": {"type": "string", "description": "The memory content"},
                 "visibility": {"type": "string", "enum": ["private", "shared", "thread"]},
                 "message_type": {"type": "string", "description": "Type of message"},
-                "tags": {"type": "array", "items": {"type": "string"}},
+                "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]},
                 "conversation_thread": {"type": "string"},
-                "related_agents": {"type": "array", "items": {"type": "string"}},
-                "responding_to": {"type": "array", "items": {"type": "string"}},
+                "related_agents": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]},
+                "responding_to": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}
             },
             "required": ["content"],
         },
@@ -857,12 +879,12 @@ async def _handle_remember(cortex: CerebroCortex, args: dict) -> list[TextConten
     node = cortex.remember(
         content=args["content"],
         memory_type=memory_type,
-        tags=args.get("tags"),
+        tags=_coerce_array(args.get("tags")),
         salience=args.get("salience"),
         agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
         session_id=args.get("session_id"),
         visibility=visibility,
-        context_ids=args.get("context_ids") or args.get("responding_to"),
+        context_ids=_coerce_array(args.get("context_ids") or args.get("responding_to")),
     )
 
     if node is None:
@@ -885,7 +907,7 @@ async def _handle_remember(cortex: CerebroCortex, args: dict) -> list[TextConten
 async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     memory_types = None
     if "memory_types" in args:
-        memory_types = [MemoryType(t) for t in args["memory_types"]]
+        memory_types = [MemoryType(t) for t in _coerce_array(args["memory_types"]) or []]
 
     explain = args.get("explain", False)
 
@@ -895,7 +917,7 @@ async def _handle_recall(cortex: CerebroCortex, args: dict) -> list[TextContent]
         memory_types=memory_types,
         agent_id=args.get("agent_id", args.get("agent_filter")),
         min_salience=args.get("min_salience", 0.0),
-        context_ids=args.get("context_ids"),
+        context_ids=_coerce_array(args.get("context_ids")),
         conversation_thread=args.get("conversation_thread"),
         explain=explain,
     )
@@ -998,7 +1020,7 @@ async def _handle_update_memory(cortex: CerebroCortex, args: dict) -> list[TextC
     updated = cortex.update_memory(
         memory_id=args["memory_id"],
         content=args.get("content"),
-        tags=args.get("tags"),
+        tags=_coerce_array(args.get("tags")),
         salience=args.get("salience"),
         visibility=visibility,
         agent_id=args.get("agent_id"),
@@ -1144,7 +1166,7 @@ async def _handle_get_episode_memories(cortex: CerebroCortex, args: dict) -> lis
 async def _handle_store_intention(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     node = cortex.store_intention(
         content=args["content"],
-        tags=args.get("tags"),
+        tags=_coerce_array(args.get("tags")),
         agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
         salience=args.get("salience", 0.7),
     )
@@ -1180,19 +1202,23 @@ async def _handle_session_save(cortex: CerebroCortex, args: dict) -> list[TextCo
     # Build session note content
     parts = [f"SESSION SUMMARY: {args['session_summary']}"]
 
-    if args.get("key_discoveries"):
+    key_discoveries = _coerce_array(args.get("key_discoveries"))
+    unfinished_business = _coerce_array(args.get("unfinished_business"))
+    if_disoriented = _coerce_array(args.get("if_disoriented"))
+
+    if key_discoveries:
         parts.append("\nKEY DISCOVERIES:")
-        for d in args["key_discoveries"]:
+        for d in key_discoveries:
             parts.append(f"  - {d}")
 
-    if args.get("unfinished_business"):
+    if unfinished_business:
         parts.append("\nUNFINISHED BUSINESS:")
-        for u in args["unfinished_business"]:
+        for u in unfinished_business:
             parts.append(f"  - {u}")
 
-    if args.get("if_disoriented"):
+    if if_disoriented:
         parts.append("\nIF DISORIENTED:")
-        for o in args["if_disoriented"]:
+        for o in if_disoriented:
             parts.append(f"  - {o}")
 
     content = "\n".join(parts)
@@ -1448,8 +1474,8 @@ async def _handle_common_neighbors(cortex: CerebroCortex, args: dict) -> list[Te
 async def _handle_create_schema(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     node = cortex.create_schema(
         content=args["content"],
-        source_ids=args["source_ids"],
-        tags=args.get("tags"),
+        source_ids=_coerce_array(args["source_ids"]) or [],
+        tags=_coerce_array(args.get("tags")),
         agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
     )
     preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
@@ -1473,8 +1499,8 @@ async def _handle_list_schemas(cortex: CerebroCortex, args: dict) -> list[TextCo
 
 async def _handle_find_matching_schemas(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     schemas = cortex.find_matching_schemas(
-        tags=args.get("tags"),
-        concepts=args.get("concepts"),
+        tags=_coerce_array(args.get("tags")),
+        concepts=_coerce_array(args.get("concepts")),
     )
     if not schemas:
         return [TextContent(type="text", text="No matching schemas found.")]
@@ -1502,8 +1528,8 @@ async def _handle_get_schema_sources(cortex: CerebroCortex, args: dict) -> list[
 async def _handle_store_procedure(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     node = cortex.store_procedure(
         content=args["content"],
-        tags=args.get("tags"),
-        derived_from=args.get("derived_from"),
+        tags=_coerce_array(args.get("tags")),
+        derived_from=_coerce_array(args.get("derived_from")),
         agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
     )
     preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
@@ -1530,8 +1556,8 @@ async def _handle_list_procedures(cortex: CerebroCortex, args: dict) -> list[Tex
 
 async def _handle_find_relevant_procedures(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     procedures = cortex.find_relevant_procedures(
-        tags=args.get("tags"),
-        concepts=args.get("concepts"),
+        tags=_coerce_array(args.get("tags")),
+        concepts=_coerce_array(args.get("concepts")),
     )
     if not procedures:
         return [TextContent(type="text", text="No matching procedures found.")]
@@ -1573,7 +1599,7 @@ async def _handle_ingest_file(cortex: CerebroCortex, args: dict) -> list[TextCon
         return [TextContent(type="text", text=f"Not a file: {file_path}")]
 
     suffix = file_path.suffix.lower()
-    tags = args.get("tags", [])
+    tags = list(_coerce_array(args.get("tags")) or [])
     tags.append(f"source:{file_path.name}")
 
     try:
@@ -1616,7 +1642,7 @@ async def _handle_send_message(cortex: CerebroCortex, args: dict) -> list[TextCo
     to = args["to"]
     content = args["content"]
     in_reply_to = args.get("in_reply_to")
-    tags = args.get("tags", [])
+    tags = _coerce_array(args.get("tags"))
 
     node = cortex.send_message(
         to=to,
