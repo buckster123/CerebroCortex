@@ -33,6 +33,7 @@ class GraphStore:
         self._graph: Optional[igraph.Graph] = None
         self._id_to_vertex: dict[str, int] = {}
         self._vertex_to_id: dict[int, str] = {}
+        self._last_data_version: Optional[int] = None  # Track SQLite data_version for multi-process sync
 
     def initialize(self) -> None:
         """Create/open database and load graph into memory."""
@@ -101,6 +102,27 @@ class GraphStore:
                 g.es["last_activated"] = edge_last_activated
 
         self._graph = g
+        self._snapshot_data_version()
+
+    def _get_data_version(self) -> int:
+        """Get SQLite's PRAGMA data_version — increments when any process writes."""
+        return self.conn.execute("PRAGMA data_version").fetchone()[0]
+
+    def _snapshot_data_version(self) -> None:
+        """Record the current data_version after an igraph rebuild."""
+        self._last_data_version = self._get_data_version()
+
+    def _ensure_igraph_fresh(self) -> None:
+        """Check if another process has written to SQLite; if so, resync igraph.
+
+        Uses SQLite's PRAGMA data_version which is a zero-cost in-memory counter
+        that increments whenever any connection (including other processes) commits
+        a write via WAL. This makes multi-process igraph usage safe without locks
+        or polling — we only rebuild when the DB has actually changed under us.
+        """
+        current = self._get_data_version()
+        if self._last_data_version is not None and current != self._last_data_version:
+            self._rebuild_igraph()
 
     def resync_igraph(self) -> None:
         """Full re-sync from SQLite (called after dream engine, etc.)."""
@@ -418,6 +440,7 @@ class GraphStore:
 
         Returns: [(neighbor_id, weight, link_type, last_activated_iso), ...]
         """
+        self._ensure_igraph_fresh()
         vertex_idx = self._id_to_vertex.get(node_id)
         if vertex_idx is None:
             return []
@@ -454,6 +477,7 @@ class GraphStore:
 
     def get_degree(self, node_id: str) -> int:
         """Get the number of links for a node."""
+        self._ensure_igraph_fresh()
         vertex_idx = self._id_to_vertex.get(node_id)
         if vertex_idx is None:
             return 0
@@ -657,6 +681,7 @@ class GraphStore:
             agent_id: If provided, scope counts to this agent's visible
                       memories (SHARED + own PRIVATE/THREAD).
         """
+        self._ensure_igraph_fresh()
         if agent_id:
             scope = (
                 "WHERE visibility='shared' "

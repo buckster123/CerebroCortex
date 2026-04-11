@@ -78,7 +78,7 @@ Dev mode (via bash scripts): `./data/`
 ## Architecture Notes
 
 - **SQLite is canonical**: igraph rebuilt from SQLite on init. ChromaDB can be backfilled from SQLite.
-- **No concurrency locks**: igraph mutations are unprotected. Safe for single MCP server process, risky for multi-process access.
+- **Multi-process igraph sync**: igraph is auto-resynced from SQLite using `PRAGMA data_version` detection. When another process commits a write, the next igraph read operation (`get_neighbors`, `get_degree`, `stats`) detects the version change and rebuilds automatically. Zero polling, zero locks, safe for multi-process access (MCP + API + Dream Engine simultaneously).
 - **Pruning is safe**: Only prunes nodes with `degree == 0` (no links) — bridge nodes can't be pruned.
 - **Gating bypass**: `send_message()` and `store_intention()` skip the Thalamus gating engine.
 
