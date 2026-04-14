@@ -29,7 +29,7 @@
 
 CerebroCortex is a **brain-analogous memory system for AI agents**. It doesn't just store and retrieve text — it *encodes*, *associates*, *consolidates*, and *dreams*, using the same cognitive architecture that makes biological memory so powerful.
 
-Built for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), it gives Claude (or any LLM) persistent, associative, emotionally-weighted memory that strengthens with use, decays with neglect, and reorganizes itself while it sleeps.
+Built for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), it gives [Hermes Agent](https://github.com/NousResearch/hermes-agent), Claude, or any MCP-compatible LLM persistent, associative, emotionally-weighted memory that strengthens with use, decays with neglect, and reorganizes itself while it sleeps.
 
 > **TL;DR** — Imagine if your AI assistant had a hippocampus, an amygdala, and could dream.
 > That's CerebroCortex.
@@ -123,13 +123,13 @@ cd CerebroCore
 pip install -e ".[all]"
 ```
 
-### Run as MCP Server (for Claude, OpenClaw, or any MCP client)
+### Run as MCP Server (for Hermes Agent, Claude, or any MCP client)
 
 ```bash
 ./cerebro-mcp
 ```
 
-Add to your Claude config (`~/.claude.json`) or OpenClaw MCP config:
+Add to your Hermes config (`~/.hermes/config.yaml`), Claude config (`~/.claude.json`), or any MCP client:
 
 ```json
 {
@@ -140,6 +140,17 @@ Add to your Claude config (`~/.claude.json`) or OpenClaw MCP config:
   }
 }
 ```
+
+For Hermes Agent, add to your `~/.hermes/config.yaml`:
+
+```yaml
+mcp:
+  servers:
+    cerebro-cortex:
+      command: cerebro-mcp  # or /path/to/CerebroCore/cerebro-mcp
+```
+
+See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** for full Hermes setup including the memory provider plugin.
 
 Optionally set an agent identity via environment variable:
 
@@ -705,7 +716,7 @@ CerebroCortex exposes three interfaces — use whichever fits your workflow:
 
 ### MCP Server (40 Tools)
 
-The native interface for Claude, OpenClaw, and any MCP-compatible agent. All tool descriptions are written in plain English so agents can pick tools by description alone — no jargon.
+The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All tool descriptions are written in plain English so agents can pick tools by description alone — no jargon.
 
 ```bash
 ./cerebro-mcp
@@ -874,14 +885,23 @@ cerebro import markdown knowledge.md
 
 CerebroCortex works as a **drop-in memory upgrade** for any AI agent framework that supports MCP. No protocol changes needed — the MCP server speaks standard JSON-RPC 2.0 over stdio.
 
-### OpenClaw / Other Frameworks
+### Hermes Agent
+
+CerebroCortex is a community memory provider for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Two integration paths:
+
+1. **MCP Server** — Add to `config.yaml`, get 40+ tools instantly (see [Quick Start](#quick-start))
+2. **Memory Provider Plugin** — Deeper integration with prefetch, background sync, and session summaries (see [PR #7913](https://github.com/NousResearch/hermes-agent/pull/7913))
+
+See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** for the complete Hermes integration guide.
+
+### Claude Code / OpenClaw / Other Frameworks
 
 1. Point your framework's MCP adapter at `./cerebro-mcp`
 2. All 40 tools are auto-discovered with plain-English descriptions
 3. Set `CEREBRO_AGENT_ID` to identify your agent
 
-See **[INTEGRATE.md](INTEGRATE.md)** for detailed setup:
-- Quick start for OpenClaw and Claude Code
+See **[INTEGRATE.md](INTEGRATE.md)** for detailed setup with Claude Code and OpenClaw:
+- Quick start for Claude Code and OpenClaw
 - Configuration (agent ID, API keys, runtime settings)
 - Tool reference table (most useful tools for agents)
 - Multi-agent setup with visibility scoping
@@ -1225,7 +1245,8 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 - [x] OpenAI-compatible LLM provider (LM Studio support)
 - [x] WebSocket real-time updates for dashboard
 - [x] Runtime settings management (hot-reload from settings.json/.env)
-- [x] Agent framework integration (OpenClaw drop-in, plain-English tool descriptions)
+- [x] Agent framework integration (Hermes Agent, OpenClaw, Claude Code — plain-English tool descriptions)
+- [x] Hermes Agent memory provider plugin ([PR #7913](https://github.com/NousResearch/hermes-agent/pull/7913))
 - [x] Configurable agent ID via environment variable
 - [x] File ingestion MCP tool (.md, .json, .txt, code files)
 - [ ] Run Dream Engine on imported data to discover links
@@ -1243,5 +1264,5 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 ---
 
 <p align="center">
-  <sub>Built with 🧠 by humans and Claude &bull; Powered by cognitive science, not just cosine similarity</sub>
+  <sub>Built with 🧠 by humans and Claude &bull; Integrated with <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> &bull; Powered by cognitive science, not just cosine similarity</sub>
 </p>

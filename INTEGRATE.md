@@ -1,6 +1,8 @@
-# Integrating CerebroCortex with OpenClaw
+# Integrating CerebroCortex with Claude Code & OpenClaw
 
 CerebroCortex (CC) is a drop-in memory upgrade for AI agents. It adds decay/promotion, multi-agent convergence, associative graph search, session continuity, and offline memory maintenance — all features that file-based memory systems lack.
+
+> **Using Hermes Agent?** See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** instead — it covers both the MCP server and the dedicated memory provider plugin.
 
 CC's MCP server speaks standard MCP over stdio JSON-RPC 2.0. The `openclaw-mcp-adapter` plugin connects to it directly with zero protocol changes.
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-CerebroCortex is a brain-analogous AI memory system running on a Raspberry Pi 5 cluster. Published on PyPI as `cerebro-cortex`. It extends Neo-Cortex with:
+CerebroCortex is a brain-analogous AI memory system running on a Raspberry Pi 5 cluster. Published on PyPI as `cerebro-cortex`. Integrated with [Hermes Agent](https://github.com/NousResearch/hermes-agent) as a community memory provider (MCP + plugin). It extends Neo-Cortex with:
 - **6 memory modalities**: episodic, semantic, procedural, affective, prospective, schematic
 - **Associative network**: typed/weighted links with spreading activation (igraph)
 - **ACT-R + FSRS hybrid**: biologically-inspired activation and spaced-repetition decay
