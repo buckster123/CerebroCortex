@@ -159,8 +159,6 @@ CREATE TABLE IF NOT EXISTS dream_log (
     success INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE INDEX IF NOT EXISTS idx_dream_cycle ON dream_log(cycle_id);
-
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
