@@ -33,6 +33,13 @@ _cortex: Optional[CerebroCortex] = None
 def get_cortex() -> CerebroCortex:
     global _cortex
     if _cortex is None:
+        # Apply settings.json/.env overrides before Cortex init so LLM providers,
+        # data dirs etc reflect user config (matches mcp_server.py behavior).
+        try:
+            from cerebro.settings import load_on_startup
+            load_on_startup()
+        except Exception:
+            pass
         _cortex = CerebroCortex()
         _cortex.initialize()
     return _cortex
