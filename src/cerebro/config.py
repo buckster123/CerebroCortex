@@ -162,6 +162,11 @@ OPENAI_COMPAT_BASE_URL = "http://192.168.0.107:1234"
 OPENAI_COMPAT_STRIP_THINK = True  # Strip <think>...</think> from responses (Qwen3, etc.)
 OPENAI_COMPAT_NO_THINK = True  # Append /no_think to system prompts (disables CoT for Qwen3)
 
+# OpenAI-compatible embeddings endpoint (ryzenai-serve, LMStudio, vLLM, etc.)
+# Leave empty to disable and fall back to sentence-transformers.
+OPENAI_COMPAT_EMBEDDING_BASE_URL = ""
+OPENAI_COMPAT_EMBEDDING_MODEL = ""
+
 # =============================================================================
 # Server
 # =============================================================================

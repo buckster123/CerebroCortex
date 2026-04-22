@@ -20,6 +20,7 @@ from cerebro.config import (
     OLLAMA_EMBEDDING_MODEL,
     SBERT_MODEL,
 )
+from cerebro import config as _config  # live reference for settings overrides
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,57 @@ class OllamaEmbeddings:
         return self._embed_single(query)
 
 
+class OpenAICompatEmbeddings:
+    """OpenAI-compatible HTTP embeddings. Works with ryzenai-serve, LMStudio, vLLM, etc.
+
+    POST {base_url}/v1/embeddings  with body {"input": [...], "model": "..."}.
+    Returns {"data": [{"embedding": [...], "index": i}, ...]}.
+    """
+
+    def __init__(self, model: str = "", base_url: str = ""):
+        self.model = model or getattr(_config, "OPENAI_COMPAT_EMBEDDING_MODEL", "")
+        self.base_url = (base_url or getattr(_config, "OPENAI_COMPAT_EMBEDDING_BASE_URL", "")).rstrip("/")
+        if not self.base_url:
+            raise ValueError("OpenAICompatEmbeddings requires a base_url (e.g. http://localhost:8001)")
+        self._dimension = None
+        self._name = f"openai_compat:{self.model or 'default'}@{self.base_url}"
+
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension or EMBEDDING_DIM
+
+    def __call__(self, input: list[str]) -> list[np.ndarray]:
+        return self.embed(input)
+
+    def embed(self, texts: list[str]) -> list[np.ndarray]:
+        if not texts:
+            return []
+        import httpx
+        payload = {"input": texts}
+        if self.model:
+            payload["model"] = self.model
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(f"{self.base_url}/v1/embeddings", json=payload)
+            response.raise_for_status()
+            body = response.json()
+        data = body.get("data", [])
+        data.sort(key=lambda d: d.get("index", 0))
+        vecs = [np.array(d["embedding"], dtype=np.float32) for d in data]
+        if vecs and self._dimension is None:
+            self._dimension = int(vecs[0].shape[0])
+        return vecs
+
+    def embed_query(self, text: str = None, *, input: str = None) -> np.ndarray:
+        query = text if text is not None else input
+        if query is None:
+            raise ValueError("Must provide text or input")
+        out = self.embed([query])
+        return out[0]
+
+
 class FallbackEmbeddings:
     """Hash-based pseudo-embeddings when nothing else is available.
 
@@ -202,9 +254,25 @@ def check_ollama_available() -> bool:
         return False
 
 
+def check_openai_compat_available() -> bool:
+    base_url = getattr(_config, "OPENAI_COMPAT_EMBEDDING_BASE_URL", "")
+    if not base_url:
+        return False
+    try:
+        import httpx
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(f"{base_url.rstrip('/')}/v1/models")
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
 def get_embedding_function(prefer: str = "auto") -> EmbeddingFunction:
     """Get the best available embedding function."""
     if prefer == "auto":
+        if check_openai_compat_available():
+            logger.info(f"Using OpenAI-compat embeddings at {_config.OPENAI_COMPAT_EMBEDDING_BASE_URL}")
+            return OpenAICompatEmbeddings()
         if check_sentence_transformers_available():
             logger.info("Using sentence-transformers embeddings")
             return SentenceTransformerEmbeddings()
@@ -213,6 +281,8 @@ def get_embedding_function(prefer: str = "auto") -> EmbeddingFunction:
             return OllamaEmbeddings()
         logger.warning("No embedding model available, using fallback")
         return FallbackEmbeddings()
+    elif prefer == "openai_compat":
+        return OpenAICompatEmbeddings()
     elif prefer == "sbert":
         return SentenceTransformerEmbeddings()
     elif prefer == "ollama":

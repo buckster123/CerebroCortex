@@ -34,6 +34,8 @@ _SETTING_MAP: dict[str, str] = {
     "llm.fallback_provider": "LLM_FALLBACK_PROVIDER",
     "llm.fallback_model": "LLM_FALLBACK_MODEL",
     "llm.openai_compat_base_url": "OPENAI_COMPAT_BASE_URL",
+    "llm.openai_compat_embedding_base_url": "OPENAI_COMPAT_EMBEDDING_BASE_URL",
+    "llm.openai_compat_embedding_model": "OPENAI_COMPAT_EMBEDDING_MODEL",
     "llm.temperature": "LLM_TEMPERATURE",
     "llm.max_tokens": "LLM_MAX_TOKENS",
     "llm.strip_think": "OPENAI_COMPAT_STRIP_THINK",
