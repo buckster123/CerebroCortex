@@ -18,6 +18,12 @@ from typing import Any, Optional
 from cerebro.config import ALL_COLLECTIONS, CHROMA_DIR, EMBEDDING_DIM
 from cerebro.models.memory import MemoryMetadata, MemoryNode
 from cerebro.storage.base import VectorStore
+from cerebro.storage.embedder_fingerprint import (
+    check_match,
+    extract_fingerprint,
+    fingerprint_for,
+    merge_into_metadata,
+)
 from cerebro.storage.embeddings import get_embedding_function
 
 logger = logging.getLogger(__name__)
@@ -54,11 +60,24 @@ class ChromaStore(VectorStore):
         if name not in self._collections:
             client = self._get_client()
             embedding_fn = self._get_embedding_fn()
-            self._collections[name] = client.get_or_create_collection(
+            current_fp = fingerprint_for(embedding_fn)
+            base_meta = {"hnsw:space": "cosine"}
+            # new collections get the fingerprint baked in
+            new_meta = merge_into_metadata(base_meta, current_fp)
+            coll = client.get_or_create_collection(
                 name=name,
                 embedding_function=embedding_fn,
-                metadata={"hnsw:space": "cosine"},
+                metadata=new_meta,
             )
+            # If the collection pre-existed, Chroma keeps its old metadata — check for drift
+            stored_fp = extract_fingerprint(coll.metadata or {})
+            check_match(name, stored_fp, current_fp)
+            if stored_fp is None:
+                logger.info(
+                    f"collection {name!r} has no embedder fingerprint (pre-v0.3.0); "
+                    f"run `cerebro doctor audit --fix-fingerprint` to stamp it with the current embedder"
+                )
+            self._collections[name] = coll
         return self._collections[name]
 
     def initialize(self) -> None:

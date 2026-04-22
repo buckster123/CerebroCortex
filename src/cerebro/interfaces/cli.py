@@ -1352,6 +1352,109 @@ def import_markdown(file, as_json):
 
 
 # =============================================================================
+# Doctor — introspection & repair
+# =============================================================================
+
+@cli.group()
+def doctor():
+    """Introspect + repair CerebroCortex state."""
+    pass
+
+
+@doctor.command("audit")
+@click.option("--fix-fingerprint", is_flag=True,
+              help="Stamp the current embedder's fingerprint onto any collection "
+                   "lacking one, or overwrite a stale fingerprint. Does NOT re-embed "
+                   "vectors; only safe if you know the stored vectors already match "
+                   "the current embedder (e.g., just ran scripts/reembed_collections.py).")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def doctor_audit(fix_fingerprint, as_json):
+    """Audit ChromaDB collections vs the currently-configured embedder."""
+    import chromadb
+    from cerebro.config import CHROMA_DIR
+    from cerebro.settings import load_on_startup
+    from cerebro.storage.embedder_fingerprint import (
+        extract_fingerprint,
+        fingerprint_for,
+        merge_into_metadata,
+        strip_immutable_for_modify,
+    )
+    from cerebro.storage.embeddings import get_embedding_function
+
+    # Apply settings.json overrides so --json output / fingerprint comparison reflects
+    # the embedder the running server would actually use, not hardcoded defaults.
+    load_on_startup()
+
+    ef = get_embedding_function("auto")
+    current = fingerprint_for(ef)
+
+    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    colls = client.list_collections()
+
+    report = {
+        "current_embedder": current,
+        "collections": [],
+    }
+
+    for coll in colls:
+        meta = coll.metadata or {}
+        stored = extract_fingerprint(meta)
+        n = coll.count()
+        status = "ok"
+        action = None
+        if stored is None:
+            status = "missing-fingerprint"
+            if fix_fingerprint:
+                new_meta = merge_into_metadata(strip_immutable_for_modify(meta), current)
+                coll.modify(metadata=new_meta)
+                action = "stamped"
+        elif (stored["cc_embedder_name"] != current["cc_embedder_name"]
+              or stored["cc_embedder_dim"] != current["cc_embedder_dim"]):
+            status = "mismatch"
+            if fix_fingerprint:
+                new_meta = merge_into_metadata(strip_immutable_for_modify(meta), current)
+                coll.modify(metadata=new_meta)
+                action = "overwritten"
+
+        report["collections"].append({
+            "name": coll.name,
+            "count": n,
+            "stored": stored,
+            "status": status,
+            "action": action,
+        })
+
+    if as_json:
+        _json_out(report)
+        return
+
+    click.echo("Embedder fingerprint audit")
+    click.echo("=" * 50)
+    click.echo(f"Current embedder: {current['cc_embedder_name']}  dim={current['cc_embedder_dim']}")
+    click.echo("")
+    any_issue = False
+    for row in report["collections"]:
+        marker = {"ok": "✓", "missing-fingerprint": "?", "mismatch": "✗"}[row["status"]]
+        click.echo(f"  {marker}  {row['name']:20s}  {row['count']:5d} items  {row['status']}")
+        if row["stored"]:
+            click.echo(f"       stored:  {row['stored']['cc_embedder_name']}  dim={row['stored']['cc_embedder_dim']}")
+        if row["action"]:
+            click.echo(f"       action:  {row['action']}")
+        if row["status"] != "ok":
+            any_issue = True
+
+    click.echo("")
+    if any_issue and not fix_fingerprint:
+        click.echo("Some collections need attention. Options:")
+        click.echo("  • Re-embed corpus with current embedder (recommended for mismatches):")
+        click.echo("      PYTHONPATH=src ./venv/bin/python scripts/reembed_collections.py")
+        click.echo("  • Stamp fingerprint only (missing-fingerprint on a trusted corpus):")
+        click.echo("      cerebro doctor audit --fix-fingerprint")
+    elif not any_issue:
+        click.echo("All collections are in sync with the current embedder.")
+
+
+# =============================================================================
 # Main entry point
 # =============================================================================
 
