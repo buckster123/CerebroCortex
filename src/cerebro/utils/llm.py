@@ -33,6 +33,7 @@ from cerebro.config import (
     OPENAI_COMPAT_NO_THINK,
     OLLAMA_BASE_URL,
 )
+import cerebro.config as _cfg  # for live lookup of OPENAI_COMPAT_ENDPOINTS
 
 logger = logging.getLogger("cerebro-llm")
 
@@ -183,6 +184,22 @@ class OpenAICompatProvider:
         self.model = model
         self.base_url = base_url.rstrip("/")
 
+    @classmethod
+    def from_endpoint(cls, name: str) -> "OpenAICompatProvider":
+        """Resolve a named endpoint from config.OPENAI_COMPAT_ENDPOINTS.
+
+        Raises KeyError if the name isn't registered. The lookup reads
+        cerebro.config at call time so hot-reloaded settings take effect.
+        """
+        endpoints = getattr(_cfg, "OPENAI_COMPAT_ENDPOINTS", {}) or {}
+        if name not in endpoints:
+            raise KeyError(
+                f"Unknown LLM endpoint '{name}'. Registered: {sorted(endpoints)}"
+            )
+        ep = endpoints[name]
+        return cls(model=ep.get("model", LLM_PRIMARY_MODEL),
+                   base_url=ep.get("base_url", OPENAI_COMPAT_BASE_URL))
+
     def generate(
         self,
         prompt: str,
@@ -247,12 +264,24 @@ class LLMClient:
         model: Optional[str] = None,
         fallback_provider: Optional[str] = None,
         fallback_model: Optional[str] = None,
+        endpoint: Optional[str] = None,
     ):
-        prov = provider or LLM_PRIMARY_PROVIDER
-        mod = model or LLM_PRIMARY_MODEL
+        """Construct an LLM client.
 
-        self.primary = self._make_provider(prov, mod)
-        self.primary_name = prov
+        Args:
+            endpoint: If set, resolves primary provider via the named entry
+                in config.OPENAI_COMPAT_ENDPOINTS (e.g. "gemma-vision",
+                "llama-long"). Overrides provider+model. Raises KeyError
+                if the name isn't registered. Fallback is unchanged.
+        """
+        if endpoint is not None:
+            self.primary = OpenAICompatProvider.from_endpoint(endpoint)
+            self.primary_name = f"openai_compat[{endpoint}]"
+        else:
+            prov = provider or LLM_PRIMARY_PROVIDER
+            mod = model or LLM_PRIMARY_MODEL
+            self.primary = self._make_provider(prov, mod)
+            self.primary_name = prov
 
         fb_prov = fallback_provider or LLM_FALLBACK_PROVIDER
         fb_mod = fallback_model or LLM_FALLBACK_MODEL

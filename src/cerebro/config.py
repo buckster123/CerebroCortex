@@ -162,6 +162,13 @@ OPENAI_COMPAT_BASE_URL = "http://192.168.0.107:1234"
 OPENAI_COMPAT_STRIP_THINK = True  # Strip <think>...</think> from responses (Qwen3, etc.)
 OPENAI_COMPAT_NO_THINK = True  # Append /no_think to system prompts (disables CoT for Qwen3)
 
+# Named OpenAI-compatible endpoints (for routing to alternate models)
+# Populated from settings.json under "llm.endpoints": {"name": {"base_url":..., "model":...}}
+# When non-empty, callers may do LLMClient(endpoint="name") to route that call.
+# An empty dict means behavior is unchanged: everything uses OPENAI_COMPAT_BASE_URL +
+# LLM_PRIMARY_MODEL.
+OPENAI_COMPAT_ENDPOINTS: dict = {}
+
 # OpenAI-compatible embeddings endpoint (ryzenai-serve, LMStudio, vLLM, etc.)
 # Leave empty to disable and fall back to sentence-transformers.
 OPENAI_COMPAT_EMBEDDING_BASE_URL = ""
