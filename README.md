@@ -8,10 +8,11 @@
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-532_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="532 Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-447_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="447 Tests"/></a>
   <a href="#brain-regions"><img src="https://img.shields.io/badge/brain_regions-9-ff0055?style=for-the-badge" alt="9 Brain Regions"/></a>
   <a href="#memory-types"><img src="https://img.shields.io/badge/memory_types-6-00d4ff?style=for-the-badge" alt="6 Memory Types"/></a>
   <a href="#dream-engine"><img src="https://img.shields.io/badge/dream_engine-6_phases-9d4edd?style=for-the-badge" alt="Dream Engine"/></a>
+  <a href="#interfaces"><img src="https://img.shields.io/badge/mcp_tools-56-ff6b35?style=for-the-badge" alt="56 MCP Tools"/></a>
 </p>
 
 <p align="center">
@@ -58,17 +59,18 @@ Real memory is:
 ```mermaid
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
-        MCP["MCP Server<br/><small>40 tools</small>"]
-        API["REST API<br/><small>30+ endpoints</small>"]
+        MCP["MCP Server<br/><small>56 tools</small>"]
+        API["REST API<br/><small>35+ endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
         DASH["Dashboard<br/><small>Cyberpunk UI</small>"]
     end
 
     subgraph Cortex["🧠 CerebroCortex Coordinator"]
-        REM["remember()"]
-        REC["recall()"]
+        REM["remember() / bulk_remember()"]
+        REC["recall() — text + vision"]
         ASS["associate()"]
         EPI["episode_*()"]
+        CRUD["restore() / purge() / versions()"]
     end
 
     subgraph Engines["⚡ Brain Region Engines"]
@@ -90,9 +92,10 @@ graph TB
     end
 
     subgraph Storage["💾 Triple-Backend Storage"]
-        SQ["SQLite<br/><small>Persistent graph</small>"]
+        SQ["SQLite<br/><small>Source of truth</small>"]
         IG["igraph<br/><small>In-memory traversal</small>"]
-        CH["ChromaDB<br/><small>Vector search</small>"]
+        CH["ChromaDB<br/><small>Vector search + FTS5 fallback</small>"]
+        VS["VisionVectorStore<br/><small>CLIP embeddings</small>"]
     end
 
     MCP --> Cortex
@@ -118,9 +121,15 @@ graph TB
 ### Install
 
 ```bash
-git clone https://github.com/buckster123/CerebroCore.git
-cd CerebroCore
+git clone https://github.com/buckster123/CerebroCortex.git
+cd CerebroCortex
 pip install -e ".[all]"
+```
+
+For vision support (image/PDF ingestion, cross-modal recall), include the `[vision]` extra:
+
+```bash
+pip install -e ".[all,vision]"
 ```
 
 ### Run as MCP Server (for Hermes Agent, Claude, or any MCP client)
@@ -714,7 +723,7 @@ graph LR
 
 CerebroCortex exposes three interfaces — use whichever fits your workflow:
 
-### MCP Server (40 Tools)
+### MCP Server (56 Tools)
 
 The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All tool descriptions are written in plain English so agents can pick tools by description alone — no jargon.
 
@@ -723,7 +732,7 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 ```
 
 <details>
-<summary><strong>Full MCP Tool List (40 tools)</strong></summary>
+<summary><strong>Full MCP Tool List (56 tools)</strong></summary>
 
 | Tool | Description |
 |---|---|
@@ -732,9 +741,33 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 | `recall` | Search memories by meaning, ranked by relevance, importance, and recency |
 | `get_memory` | Get a single memory by ID with all metadata |
 | `update_memory` | Update content, tags, importance, or visibility |
-| `delete_memory` | Permanently delete a memory |
+| `delete_memory` | Delete a memory (soft-delete by default) |
+| `restore_memory` | Restore a soft-deleted memory from trash |
+| `purge_memory` | Permanently delete a memory or old trash |
 | `share_memory` | Change who can see a memory (owner only) |
 | `associate` | Create a link between two memories (improves search) |
+| **Versions** | |
+| `get_memory_versions` | List edit history for a memory |
+| `restore_version` | Roll back to a previous revision |
+| **Trash** | |
+| `list_deleted` | List soft-deleted memories in trash |
+| `purge_all_deleted` | Empty trash older than N days |
+| **Bulk Operations** | |
+| `bulk_delete` | Soft-delete multiple memories at once |
+| `export_memories` | Export memories to JSON or Markdown |
+| **Tags** | |
+| `list_tags` | List all tags in use |
+| `rename_tag` | Rename a tag across all memories |
+| `merge_tags` | Merge two tags into one |
+| `delete_tag` | Remove a tag from all memories |
+| **Threads** | |
+| `list_threads` | List conversation threads |
+| `get_thread_memories` | Get all memories in a thread |
+| `prune_thread` | Remove old memories from a thread |
+| **Vision** | |
+| `ingest_file` | Read a file and store as searchable memories (supports .md, .json, .txt, .pdf, .html, .csv, images, code) |
+| `describe_image` | Generate a text description of an image |
+| `search_vision` | Search by image similarity |
 | **Episodes** | |
 | `episode_start` | Start recording a sequence of related events |
 | `episode_add_step` | Add a memory as the next step in an episode |
@@ -761,8 +794,6 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 | `list_procedures` | List stored workflows and how-to guides |
 | `find_relevant_procedures` | Find workflows matching tags or concepts |
 | `record_procedure_outcome` | Record whether a procedure worked or failed |
-| **File Ingestion** | |
-| `ingest_file` | Read a file and store its contents as searchable memories |
 | **Graph Exploration** | |
 | `memory_neighbors` | Get memories directly linked to a given memory |
 | `find_path` | Find the shortest chain of links between two memories |
@@ -780,7 +811,7 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 
 </details>
 
-### REST API (30+ Endpoints)
+### REST API (35+ Endpoints)
 
 Full HTTP API with interactive docs at `/docs`.
 
@@ -994,6 +1025,24 @@ Two formats supported:
 ]
 ```
 
+### From Images, PDFs, HTML, and CSV
+
+```bash
+# Image — auto-captioned and OCR'd, vision embeddings extracted
+cerebro ingest image /path/to/photo.jpg --tags ["reference"]
+
+# PDF — text extracted per-page, embedded images linked as attachments
+cerebro ingest pdf /path/to/document.pdf --tags ["research"]
+
+# HTML — text + image references ingested
+cerebro ingest html /path/to/page.html --tags ["web"]
+
+# CSV — row-per-memory or schema-mode ingestion
+cerebro ingest csv /path/to/data.csv --tags ["dataset"]
+```
+
+Requires `[vision]` extras: `pip install "cerebro-cortex[vision]"`
+
 ### From Markdown
 
 ```bash
@@ -1017,13 +1066,38 @@ The event loop is the core of every asyncio application...
 ### From Text & Code Files
 
 ```bash
-# Via MCP tool
+# Via MCP tool — auto-detects format from extension
 ingest_file(file_path="/path/to/notes.txt", tags=["project"])
+ingest_file(file_path="/path/to/paper.pdf", tags=["research"])
+ingest_file(file_path="/path/to/screenshot.png", tags=["reference"])
 
-# Supports: .txt, .py, .js, .ts, .go, .rs, .java, .rb, .sh, and more
+# Supports: .txt, .md, .json, .pdf, .html, .csv, .png, .jpg, .jpeg, .webp
+#           .py, .js, .ts, .go, .rs, .java, .rb, .sh, and more
 ```
 
 Splits by blank lines into paragraphs. Paragraphs exceeding ~500 words are further split at sentence boundaries. Duplicates are automatically detected and skipped.
+
+---
+
+## Vision & Cross-Modal Recall
+
+CerebroCortex v0.4.0 introduces **cross-modal memory** — images are first-class citizens alongside text.
+
+### How It Works
+
+1. **Image ingestion**: `ImageAdapter` generates a text caption (via Ollama llava fallback) and optional OCR (pytesseract). The image is also embedded via CLIP (sentence-transformers) into a separate vision vector space.
+2. **PDF ingestion**: `PDFAdapter` extracts text per-page and pulls out embedded images, linking them as `part_of` the document.
+3. **Cross-modal recall**: When `recall(include_vision=True)` is called, text results from ChromaDB are merged with vision results from `VisionVectorStore`. Existing text memories get a boost if their attached images match; new image-only candidates are inserted with a slightly lower initial score.
+
+```python
+# Search text and vision together
+results = brain.recall("deployment diagram", include_vision=True, top_k=10)
+
+# Search vision only
+results = brain.recall("red server icon", include_vision=True, top_k=5)
+```
+
+**Requirements:** Install with `pip install "cerebro-cortex[vision]"` (includes pillow, pytesseract, pymupdf, beautifulsoup4).
 
 ---
 
@@ -1104,37 +1178,51 @@ All tunables live in `src/cerebro/config.py`. Key parameters:
 
 ```
 CerebroCortex/
-├── cerebro-mcp                    # MCP server launcher
-├── cerebro-api                    # REST API launcher
-├── INTEGRATE.md                   # Agent framework integration guide
-├── pyproject.toml                 # Package config & dependencies
+│── cerebro-mcp                    # MCP server launcher
+│── cerebro-api                    # REST API launcher
+│── INTEGRATE.md                   # Agent framework integration guide
+│── pyproject.toml                 # Package config & dependencies
 │
 ├── src/cerebro/
-│   ├── types.py                   # Core enums (6 memory types, 9 link types, 4 layers)
+│   │
+│   ├── types.py                   # Core enums (6 memory types, 9 link types, 4 layers, MediaType)
 │   ├── config.py                  # All tuneable parameters
 │   ├── settings.py                # Runtime settings (hot-reload from settings.json/.env)
 │   ├── cortex.py                  # Main coordinator — the brain itself
 │   │
 │   ├── models/                    # Pydantic data models
-│   │   ├── memory.py              #   MemoryNode, StrengthState, MemoryMetadata
+│   │   ├── memory.py              #   MemoryNode, StrengthState, MemoryMetadata, Attachment
 │   │   ├── link.py                #   AssociativeLink
 │   │   ├── episode.py             #   Episode, EpisodeStep
 │   │   ├── agent.py               #   AgentProfile
 │   │   └── activation.py          #   ActivationResult, RecallResult
 │   │
-│   ├── storage/                   # Triple-backend storage
+│   ├── storage/                   # Storage backends
+│   │   ├── coordinator.py         #   StorageCoordinator — single write gateway
 │   │   ├── graph_store.py         #   SQLite + igraph hybrid
 │   │   ├── chroma_store.py        #   ChromaDB vector store
-│   │   ├── sqlite_schema.py       #   Schema initialization
+│   │   ├── vision_embeddings.py   #   CLIP vision embeddings + sidecar store
+│   │   ├── sqlite_schema.py       #   Schema initialization (v6: FTS5, attachments, versions)
 │   │   ├── embeddings.py          #   SBERT / Ollama embedding functions
 │   │   └── base.py                #   Abstract VectorStore interface
+│   │
+│   ├── ingestion/                 # Unified ingestion pipeline
+│   │   ├── pipeline.py            #   IngestionPipeline — adapter registry + orchestration
+│   │   ├── base.py                #   IngestionAdapter base class
+│   │   ├── text_adapter.py        #   Plain text & code files
+│   │   ├── markdown_adapter.py    #   Markdown with YAML frontmatter
+│   │   ├── json_adapter.py        #   Generic JSON arrays
+│   │   ├── image_adapter.py       #   Images: caption + OCR + vision embed
+│   │   ├── pdf_adapter.py         #   PDFs: text + image extraction
+│   │   ├── html_adapter.py        #   HTML: text + image references
+│   │   └── csv_adapter.py         #   CSV: row-per-memory or schema mode
 │   │
 │   ├── activation/                # Biologically-inspired activation
 │   │   ├── strength.py            #   ACT-R base-level + FSRS retrievability
 │   │   ├── decay.py               #   Layer decay + promotion logic
 │   │   └── spreading.py           #   Collins & Loftus spreading activation
 │   │
-│   ├── engines/                   # 9 brain-region engines
+│   ├── engines/                   # 9 brain-region engines + tag manager
 │   │   ├── thalamus.py            #   GatingEngine — sensory filter
 │   │   ├── amygdala.py            #   AffectEngine — emotional processing
 │   │   ├── temporal.py            #   SemanticEngine — concept extraction
@@ -1143,11 +1231,12 @@ CerebroCortex/
 │   │   ├── cerebellum.py          #   ProceduralEngine — skill memory
 │   │   ├── prefrontal.py          #   ExecutiveEngine — ranking & promotion
 │   │   ├── neocortex.py           #   SchemaEngine — abstraction
-│   │   └── dream.py               #   DreamEngine — offline consolidation
+│   │   ├── dream.py               #   DreamEngine — offline consolidation
+│   │   └── tag_manager.py         #   TagManager — tag CRUD
 │   │
 │   ├── interfaces/                # External interfaces
-│   │   ├── mcp_server.py          #   MCP server (40 tools, plain-English descriptions)
-│   │   ├── api_server.py          #   FastAPI REST server (30+ endpoints)
+│   │   ├── mcp_server.py          #   MCP server (56 tools)
+│   │   ├── api_server.py          #   FastAPI REST server (35+ endpoints)
 │   │   └── cli.py                 #   Click CLI
 │   │
 │   ├── migration/                 # Data import tools
@@ -1162,7 +1251,7 @@ CerebroCortex/
 ├── web/
 │   └── index.html                 #   Cyberpunk dashboard (3D/2D graph viz)
 │
-├── tests/                         #   532 tests across 23 test files
+├── tests/                         #   447 tests across 26 test files
 │   ├── conftest.py                #   Shared fixtures (incl. multi_agent_cortex)
 │   ├── test_models/
 │   ├── test_storage/
@@ -1170,7 +1259,9 @@ CerebroCortex/
 │   ├── test_engines/              #   (11 files — engines + scope enforcement)
 │   ├── test_interfaces/
 │   ├── test_migration/
-│   └── test_utils/
+│   ├── test_ingestion/            #   Adapter tests (text, markdown, json, image, pdf, html, csv)
+│   ├── test_vision/               #   Vision embeddings + cross-modal recall
+│   └── test_crud/                 #   Soft-delete, versioning, bulk ops
 │
 └── data/                          #   Runtime data (gitignored)
     ├── cerebro.db                 #   SQLite graph database
@@ -1182,34 +1273,49 @@ CerebroCortex/
 
 ## Testing
 
-532 tests. ~11 minutes on RPi5.
+447 tests. Run in groups to avoid file-descriptor exhaustion from ChromaDB client cleanup:
 
 ```bash
-PYTHONPATH=src pytest tests/ -v
+# Core + engines + storage + activation
+PYTHONPATH=src pytest tests/test_engines tests/test_models tests/test_activation tests/test_storage -q --tb=short
+
+# Migration
+PYTHONPATH=src pytest tests/test_migration -q --tb=short
+
+# Interfaces (MCP, API, CLI)
+PYTHONPATH=src pytest tests/test_interfaces -q --tb=short
+
+# New features (ingestion, vision, CRUD)
+PYTHONPATH=src pytest tests/test_ingestion tests/test_vision tests/test_crud -q --tb=short
 ```
 
 ```
-tests/test_models/test_memory.py         ✓  (data model validation)
-tests/test_storage/test_graph_store.py   ✓  (SQLite + igraph operations)
-tests/test_activation/test_strength.py   ✓  (ACT-R + FSRS math)
-tests/test_activation/test_spreading.py  ✓  (spreading activation)
-tests/test_engines/test_thalamus.py      ✓  (gating + dedup)
-tests/test_engines/test_amygdala.py      ✓  (emotional analysis)
-tests/test_engines/test_temporal.py      ✓  (concept extraction)
-tests/test_engines/test_hippocampus.py   ✓  (episode management)
-tests/test_engines/test_association.py   ✓  (linking + Hebbian)
-tests/test_engines/test_cerebellum.py    ✓  (procedural memory)
-tests/test_engines/test_prefrontal.py    ✓  (executive ranking)
-tests/test_engines/test_neocortex.py     ✓  (schema formation)
+tests/test_models/test_memory.py              ✓  (data model validation)
+tests/test_storage/test_graph_store.py        ✓  (SQLite + igraph operations)
+tests/test_storage/test_embedder_fingerprint.py ✓  (embedder health)
+tests/test_activation/test_strength.py        ✓  (ACT-R + FSRS math)
+tests/test_activation/test_spreading.py       ✓  (spreading activation)
+tests/test_engines/test_thalamus.py           ✓  (gating + dedup)
+tests/test_engines/test_amygdala.py           ✓  (emotional analysis)
+tests/test_engines/test_temporal.py           ✓  (concept extraction)
+tests/test_engines/test_hippocampus.py        ✓  (episode management)
+tests/test_engines/test_association.py        ✓  (linking + Hebbian)
+tests/test_engines/test_cerebellum.py         ✓  (procedural memory)
+tests/test_engines/test_prefrontal.py         ✓  (executive ranking)
+tests/test_engines/test_neocortex.py          ✓  (schema formation)
 tests/test_engines/test_dream.py              ✓  (dream + per-agent scoping)
 tests/test_engines/test_cortex.py             ✓  (integration tests)
 tests/test_engines/test_scope_enforcement.py  ✓  (multi-agent scope + link pruning)
-tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 40 tools)
-tests/test_interfaces/test_api_server.py ✓  (REST API)
-tests/test_interfaces/test_cli.py        ✓  (CLI commands)
-tests/test_migration/test_*.py           ✓  (all importers)
-tests/test_utils/test_llm.py            ✓  (LLM client)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 532 passed ━━━
+tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 56 tools)
+tests/test_interfaces/test_api_server.py      ✓  (REST API)
+tests/test_interfaces/test_cli.py             ✓  (CLI commands)
+tests/test_migration/test_*.py                ✓  (all importers)
+tests/test_ingestion/test_adapters.py         ✓  (7 adapters)
+tests/test_vision/test_vision_store.py        ✓  (CLIP embeddings)
+tests/test_vision/test_cross_modal.py         ✓  (cross-modal recall)
+tests/test_crud/test_soft_delete.py           ✓  (soft-delete + versioning)
+tests/test_utils/test_llm.py                  ✓  (LLM client)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 447 passed ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 ---
@@ -1222,16 +1328,30 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 
 ### Dependencies
 
-| Package | Purpose |
-|---|---|
-| `chromadb` | Vector similarity search |
-| `sentence-transformers` | SBERT embeddings (384-dim) |
-| `python-igraph` | C-speed graph operations |
-| `pydantic` | Data validation |
-| `click` | CLI framework |
-| `fastapi` + `uvicorn` | REST API (optional) |
-| `mcp` | Model Context Protocol (optional) |
-| `anthropic` | Claude API for Dream Engine (optional) |
+| Package | Purpose | Required |
+|---|---|---|
+| `chromadb` | Vector similarity search | ✓ |
+| `sentence-transformers` | SBERT embeddings (384-dim) + CLIP vision | ✓ |
+| `python-igraph` | C-speed graph operations | ✓ |
+| `pydantic` | Data validation | ✓ |
+| `click` | CLI framework | ✓ |
+| `fastapi` + `uvicorn` | REST API (optional) | ✗ |
+| `mcp` | Model Context Protocol (optional) | ✗ |
+| `anthropic` | Claude API for Dream Engine (optional) | ✗ |
+| `pillow` | Image processing (vision extra) | ✗ |
+| `pytesseract` | OCR (vision extra) | ✗ |
+| `pymupdf` | PDF text/image extraction (vision extra) | ✗ |
+| `beautifulsoup4` | HTML parsing (vision extra) | ✗ |
+
+Install subsets:
+
+```bash
+pip install 'cerebro-cortex[mcp]'           # MCP server only
+pip install 'cerebro-cortex[mcp,llm]'       # MCP + Dream Engine LLM support
+pip install 'cerebro-cortex[api]'           # REST API + dashboard
+pip install 'cerebro-cortex[vision]'        # Image/PDF/HTML/CSV ingestion + cross-modal recall
+pip install 'cerebro-cortex[all]'           # Everything
+```
 
 ---
 
@@ -1249,7 +1369,16 @@ tests/test_utils/test_llm.py            ✓  (LLM client)
 - [x] Hermes Agent memory provider plugin ([PR #7913](https://github.com/NousResearch/hermes-agent/pull/7913))
 - [x] Configurable agent ID via environment variable
 - [x] File ingestion MCP tool (.md, .json, .txt, code files)
-- [ ] Run Dream Engine on imported data to discover links
+- [x] **v0.4.0 — Unified StorageCoordinator (SQLite as source of truth)**
+- [x] **v0.4.0 — Unified ingestion pipeline with pluggable adapters**
+- [x] **v0.4.0 — Vision & cross-modal memory (CLIP + image/PDF/HTML/CSV ingestion)**
+- [x] **v0.4.0 — SQLite FTS5 keyword fallback**
+- [x] **v0.4.0 — Soft delete, trash can, memory versioning**
+- [x] **v0.4.0 — Tag management, bulk operations, thread management**
+- [x] **v0.4.0 — Pydantic v2 compliance (@field_serializer)**
+- [ ] Semantic chunking for long documents
+- [ ] Near-duplicate detection at ingestion time
+- [ ] Web dashboard refresh (real-time stats, memory browser)
 - [ ] File watcher bridge for auto-ingesting agent memory directories
 - [ ] pgvector backend option for multi-node deployments
 - [ ] Temporal decay visualization in dashboard

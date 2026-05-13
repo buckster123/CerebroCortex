@@ -1,38 +1,16 @@
-"""Import memories from Markdown files into CerebroCortex.
+"""Markdown ingestion adapter.
 
-Supports two formats:
-
-1. Section-based: each ## heading starts a new memory
-   ```markdown
-   ## Python Type Hints
-   Python 3.5+ supports type hints for function parameters and return types.
-   Use `def foo(x: int) -> str` syntax.
-
-   ## Error Handling
-   Always catch specific exceptions, not bare `except:`.
-   ```
-
-2. Paragraph-based: each blank-line-separated paragraph becomes a memory
-   (used when no ## headings are found)
-
-Optional YAML frontmatter for defaults:
-   ```markdown
-   ---
-   type: semantic
-   tags: [python, programming]
-   agent_id: CLAUDE
-   ---
-   ## ...
-   ```
+Supports section-based extraction (## headings) or paragraph fallback.
+Optional YAML frontmatter for defaults.
 """
 
 import re
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
-from cerebro.cortex import CerebroCortex
-from cerebro.models.memory import MemoryMetadata, MemoryNode, StrengthState
+from cerebro.config import DEFAULT_AGENT_ID
+from cerebro.ingestion.base import IngestionAdapter, IngestionResult
 from cerebro.types import MemoryType
 
 
@@ -46,107 +24,89 @@ TYPE_MAP: dict[str, MemoryType] = {
 }
 
 
-@dataclass
-class MarkdownImportReport:
-    """Report from a Markdown import operation."""
-    memories_imported: int = 0
-    memories_skipped: int = 0
-    errors: list[str] = field(default_factory=list)
-    duration_seconds: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "memories_imported": self.memories_imported,
-            "memories_skipped": self.memories_skipped,
-            "errors": self.errors[:20],
-            "total_errors": len(self.errors),
-            "duration_seconds": round(self.duration_seconds, 2),
-        }
-
-
-class MarkdownImporter:
+class MarkdownAdapter(IngestionAdapter):
     """Import memories from Markdown files."""
 
-    def __init__(self, cortex: CerebroCortex):
-        self.cortex = cortex
+    SUPPORTED = {".md", ".markdown", ".mdown", ".mkd"}
 
-    def import_file(self, path: Path) -> MarkdownImportReport:
+    def can_ingest(self, path: Path) -> bool:
+        return path.suffix.lower() in self.SUPPORTED
+
+    def ingest(
+        self,
+        path: Path,
+        *,
+        cortex,
+        tags: Optional[list[str]] = None,
+        agent_id: str = DEFAULT_AGENT_ID,
+        session_id: Optional[str] = None,
+    ) -> IngestionResult:
         """Import from a Markdown file."""
         text = path.read_text(encoding="utf-8")
-        return self.import_text(text)
+        return self.ingest_text(
+            text,
+            cortex=cortex,
+            tags=tags,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
 
-    def import_text(self, text: str) -> MarkdownImportReport:
+    def ingest_text(
+        self,
+        text: str,
+        *,
+        cortex,
+        tags: Optional[list[str]] = None,
+        agent_id: str = DEFAULT_AGENT_ID,
+        session_id: Optional[str] = None,
+    ) -> IngestionResult:
         """Import from Markdown text."""
-        report = MarkdownImportReport()
+        report = IngestionResult()
         start = time.time()
 
-        # Parse optional YAML frontmatter
         defaults, body = self._parse_frontmatter(text)
-
-        # Extract sections
         sections = self._extract_sections(body)
 
-        default_type = TYPE_MAP.get(
-            defaults.get("type", "semantic"), MemoryType.SEMANTIC
-        )
+        default_type = TYPE_MAP.get(defaults.get("type", "semantic"), MemoryType.SEMANTIC)
         default_tags = defaults.get("tags", [])
         if isinstance(default_tags, str):
             default_tags = [t.strip() for t in default_tags.split(",")]
-        default_agent = defaults.get("agent_id", "CLAUDE")
+        default_agent = defaults.get("agent_id", agent_id)
 
+        contents = []
+        section_tags = []
         for title, content in sections:
             content = content.strip()
             if not content or len(content) < 3:
                 report.memories_skipped += 1
                 continue
 
-            # Use title as first line if present
-            if title:
-                full_content = f"{title}: {content}"
-            else:
-                full_content = content
+            full_content = f"{title}: {content}" if title else content
+            contents.append(full_content)
 
-            # Check dedup
-            if self.cortex.graph.find_duplicate_content(full_content):
-                report.memories_skipped += 1
-                continue
-
-            # Build tags: defaults + title-derived tag
-            tags = list(default_tags)
+            sec_tags = list(default_tags)
             if title:
                 tag = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
-                if tag and tag not in tags:
-                    tags.append(tag)
+                if tag and tag not in sec_tags:
+                    sec_tags.append(tag)
+            section_tags.append(sec_tags)
 
-            now = time.time()
-            node = MemoryNode(
+        # Bulk remember with per-memory tags via individual calls
+        # (bulk_remember doesn't support per-item tags, so we loop)
+        for full_content, sec_tags in zip(contents, section_tags):
+            final_tags = list(tags or []) + sec_tags
+            node = cortex.remember(
                 content=full_content,
-                metadata=MemoryMetadata(
-                    memory_type=default_type,
-                    tags=tags,
-                    agent_id=default_agent,
-                    source="import",
-                ),
-                strength=StrengthState(
-                    access_timestamps=[now],
-                    access_count=1,
-                    last_computed_at=now,
-                ),
+                memory_type=default_type,
+                tags=final_tags,
+                agent_id=default_agent,
+                session_id=session_id,
             )
-
-            try:
-                if self.cortex._coordinator:
-                    from cerebro.storage.coordinator import StorageCoordinator
-                    coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
-                    self.cortex._coordinator.store_node(node, collection=coll)
-                else:
-                    self.cortex.graph.add_node(node)
+            if node:
                 report.memories_imported += 1
-            except Exception as e:
-                report.errors.append(f"Section '{title}': {e}")
+            else:
                 report.memories_skipped += 1
 
-        self.cortex.graph.resync_igraph()
         report.duration_seconds = time.time() - start
         return report
 
@@ -180,7 +140,6 @@ class MarkdownImporter:
             key = key.strip()
             val = val.strip()
 
-            # Parse simple lists: [a, b, c]
             if val.startswith("[") and val.endswith("]"):
                 items = val[1:-1].split(",")
                 frontmatter[key] = [item.strip().strip("'\"") for item in items if item.strip()]
@@ -199,7 +158,6 @@ class MarkdownImporter:
         If ## headings exist, each heading starts a section.
         Otherwise, split by blank lines into paragraphs.
         """
-        # Check for ## headings
         heading_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
         headings = list(heading_pattern.finditer(text))
 
@@ -213,6 +171,5 @@ class MarkdownImporter:
                 sections.append((title, body))
             return sections
 
-        # Fallback: paragraph-based splitting
         paragraphs = re.split(r"\n\s*\n", text)
         return [("", p.strip()) for p in paragraphs if p.strip()]

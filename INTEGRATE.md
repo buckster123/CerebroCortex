@@ -26,6 +26,7 @@ Install subsets if you don't need everything:
 pip install 'cerebro-cortex[mcp]'       # MCP server only
 pip install 'cerebro-cortex[mcp,llm]'   # MCP + Dream Engine LLM support
 pip install 'cerebro-cortex[api]'       # REST API + dashboard
+pip install 'cerebro-cortex[vision]'    # Image/PDF/HTML/CSV ingestion + cross-modal recall
 ```
 
 ### Option B: Clone + venv (development)
@@ -183,9 +184,32 @@ Settings can be changed without restarting the server. The priority order is:
 |------|-------------|
 | `get_memory` | Get a memory by ID |
 | `update_memory` | Edit content, tags, or importance |
-| `delete_memory` | Remove a memory |
+| `delete_memory` | Soft-delete a memory (use `hard=True` for permanent) |
+| `restore_memory` | Restore a soft-deleted memory from trash |
+| `purge_memory` | Permanently erase a memory |
+| `list_deleted` | List soft-deleted memories |
 | `share_memory` | Change who can see a memory |
+| `get_memory_versions` | List edit history for a memory |
+| `restore_version` | Roll back to a previous revision |
 | `associate` | Link two memories together |
+
+### Tags & Bulk Operations
+
+| Tool | What it does |
+|------|-------------|
+| `list_tags` | List all tags in use |
+| `rename_tag` | Rename a tag across all memories |
+| `merge_tags` | Combine two tags into one |
+| `delete_tag` | Remove a tag from all memories |
+| `bulk_delete` | Soft-delete multiple memories at once |
+| `export_memories` | Export memories to JSON or Markdown |
+
+### Vision (requires `[vision]` extra)
+
+| Tool | What it does |
+|------|-------------|
+| `describe_image` | Generate a text description of an image |
+| `search_vision` | Search by image similarity |
 
 ### Episodes (Event Sequences)
 
@@ -195,6 +219,14 @@ Settings can be changed without restarting the server. The priority order is:
 | `episode_add_step` | Add a memory as the next step |
 | `episode_end` | Finish recording |
 | `list_episodes` | List recent episodes |
+
+### Threads
+
+| Tool | What it does |
+|------|-------------|
+| `list_threads` | List conversation threads |
+| `get_thread_memories` | Get all memories in a thread |
+| `prune_thread` | Remove old memories from a thread |
 
 ### Workflows & Patterns
 
@@ -258,18 +290,28 @@ CEREBRO_AGENT_ID=coder ./cerebro-mcp
 
 ## File Ingestion
 
-Use `ingest_file` to import existing knowledge:
+Use `ingest_file` to import existing knowledge. As of v0.4.0, it auto-detects format and supports:
 
 ```
 ingest_file(file_path="/path/to/notes.md")
 ingest_file(file_path="/path/to/data.json", tags=["project", "data"])
 ingest_file(file_path="/path/to/script.py", tags=["code", "python"])
+ingest_file(file_path="/path/to/paper.pdf", tags=["research"])      # requires [vision]
+ingest_file(file_path="/path/to/page.html", tags=["web"])           # requires [vision]
+ingest_file(file_path="/path/to/data.csv", tags=["dataset"])        # requires [vision]
+ingest_file(file_path="/path/to/photo.png", tags=["reference"])     # requires [vision]
 ```
 
 Supported formats:
 - `.md` — Split by headings (## sections) or paragraphs
 - `.json` — Array of `{"content": "...", "tags": [...]}` objects
-- `.txt`, `.py`, `.js`, `.ts`, `.go`, `.rs`, `.java`, `.rb`, `.sh`, etc. — Split by paragraphs, large blocks split at sentence boundaries
+- `.txt`, `.py`, `.js`, `.ts`, `.go`, `.rs`, `.java`, `.rb`, `.sh`, etc. — Split by paragraphs
+- `.pdf` — Text per-page, embedded images linked as attachments ([vision] extra)
+- `.html` — Text + image references ([vision] extra)
+- `.csv` — Row-per-memory or schema-mode ([vision] extra)
+- `.png`, `.jpg`, `.jpeg`, `.webp` — Caption + OCR + vision embedding ([vision] extra)
+
+Requires `[vision]` extra for PDF/HTML/CSV/image support: `pip install 'cerebro-cortex[vision]'`
 
 ## CLAUDE.md Copy-Paste Snippets
 

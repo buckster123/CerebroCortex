@@ -21,9 +21,9 @@ from cerebro.types import LinkType, MemoryType
 class ProceduralEngine:
     """Manages procedural memory: strategies, workflows, and patterns."""
 
-    def __init__(self, graph: GraphStore, vector_store=None):
+    def __init__(self, graph: GraphStore, coordinator=None):
         self._graph = graph
-        self._vector = vector_store
+        self._coordinator = coordinator
 
     def store_procedure(
         self,
@@ -56,13 +56,12 @@ class ProceduralEngine:
             strength=StrengthState(stability=3.0),  # procedures start more stable
         )
 
-        self._graph.add_node(node)
-
-        # Dual-write to vector store
-        if self._vector:
-            from cerebro.cortex import CerebroCortex
-            coll = CerebroCortex._collection_for_type(node.metadata.memory_type)
-            self._vector.add_node(coll, node)
+        if self._coordinator:
+            from cerebro.storage.coordinator import StorageCoordinator
+            coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+            self._coordinator.store_node(node, collection=coll)
+        else:
+            self._graph.add_node(node)
 
         # Link to source memories
         if derived_from:

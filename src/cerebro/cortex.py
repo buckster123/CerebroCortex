@@ -19,6 +19,7 @@ The recall pipeline:
 
 import json
 import logging
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -45,6 +46,7 @@ from cerebro.engines.thalamus import GatingEngine
 from cerebro.models.episode import Episode
 from cerebro.models.memory import MemoryNode
 from cerebro.storage.chroma_store import ChromaStore
+from cerebro.storage.coordinator import StorageCoordinator
 from cerebro.storage.graph_store import GraphStore
 from cerebro.types import EmotionalValence, LinkType, MemoryLayer, MemoryType, Visibility
 
@@ -88,6 +90,8 @@ class CerebroCortex:
         # Storage
         self._graph: Optional[GraphStore] = None
         self._chroma: Optional[ChromaStore] = None
+        self._coordinator: Optional[StorageCoordinator] = None
+        self._vision_store: Optional[Any] = None
 
         # Engines (initialized in .initialize())
         self.links: Optional[LinkEngine] = None
@@ -111,6 +115,12 @@ class CerebroCortex:
             raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
         return self._chroma
 
+    @property
+    def coordinator(self) -> StorageCoordinator:
+        if self._coordinator is None:
+            raise RuntimeError("CerebroCortex not initialized. Call initialize() first.")
+        return self._coordinator
+
     def initialize(self) -> None:
         """Initialize all storage backends and engines."""
         # Ensure data directory exists
@@ -124,15 +134,36 @@ class CerebroCortex:
         self._chroma = ChromaStore(self._chroma_dir)
         self._chroma.initialize()
 
+        # Initialize storage coordinator
+        self._coordinator = StorageCoordinator(self._graph, self._chroma)
+        backfill_report = self._coordinator.backfill_pending()
+        if backfill_report["backfilled"]:
+            logger.info(f"Backfilled {backfill_report['backfilled']} nodes on startup")
+
+        # Initialize vision sidecar (optional, graceful fallback)
+        try:
+            from cerebro.storage.vision_embeddings import (
+                VisionEmbeddingFunction,
+                VisionVectorStore,
+            )
+
+            vision_fn = VisionEmbeddingFunction()
+            self._vision_store = VisionVectorStore(self._chroma._get_client(), vision_fn)
+            self._vision_store.initialize()
+        except Exception:
+            logger.info("Vision support not available (install [vision] extras)")
+            self._vision_store = None
+
         # Initialize engines
         self.links = LinkEngine(self._graph)
         self.gating = GatingEngine(self._graph)
         self.affect = AffectEngine(self._graph)
         self.semantic = SemanticEngine(self._graph)
         self.episodes = EpisodicEngine(self._graph)
-        self.procedural = ProceduralEngine(self._graph, vector_store=self._chroma)
-        self.executive = ExecutiveEngine(self._graph, vector_store=self._chroma)
-        self.schemas = SchemaEngine(self._graph, vector_store=self._chroma)
+        self.procedural = ProceduralEngine(self._graph, coordinator=self._coordinator)
+        self.executive = ExecutiveEngine(self._graph, coordinator=self._coordinator)
+        self.schemas = SchemaEngine(self._graph, coordinator=self._coordinator)
+        self.tag_manager = __import__("cerebro.engines.tag_manager", fromlist=["TagManager"]).TagManager(self._graph)
 
         self._initialized = True
 
@@ -149,13 +180,12 @@ class CerebroCortex:
 
     @staticmethod
     def _collection_for_type(memory_type: MemoryType) -> str:
-        """Determine which ChromaDB collection a memory belongs in."""
-        if memory_type in (MemoryType.SEMANTIC, MemoryType.SCHEMATIC):
-            return COLLECTION_KNOWLEDGE
-        elif memory_type == MemoryType.EPISODIC:
-            return COLLECTION_SESSIONS
-        else:  # PROCEDURAL, PROSPECTIVE, AFFECTIVE
-            return COLLECTION_MEMORIES
+        """Determine which ChromaDB collection a memory belongs in.
+
+        .. deprecated::
+            Use :py:meth:`StorageCoordinator.collection_for_type` instead.
+        """
+        return StorageCoordinator.collection_for_type(memory_type)
 
     @staticmethod
     def _can_access(
@@ -292,14 +322,14 @@ class CerebroCortex:
             created_at=node.created_at,
         )
 
-        # 5. Persist to graph store
-        self._graph.add_node(node)
+        # 5. Persist via StorageCoordinator (SQLite SOT + ChromaDB index)
+        coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+        stored = self._coordinator.store_node(node, collection=coll)
+        if stored is not None and stored.id != node.id:
+            # Deduplication returned an existing node; use it for downstream linking
+            node = stored
 
-        # 6. Persist to vector store (ChromaDB)
-        coll = self._collection_for_type(node.metadata.memory_type)
-        self._chroma.add_node(coll, node)
-
-        # 7. Auto-link
+        # 6. Auto-link
         self.links.auto_link_on_store(node, context_ids=context_ids)
         self.semantic.create_semantic_links(node)
         self.affect.create_affective_links(node)
@@ -309,6 +339,51 @@ class CerebroCortex:
             self.episodes.add_to_current_episode(session_id, node.id)
 
         return node
+
+    def bulk_remember(
+        self,
+        contents: list[str],
+        memory_type: Optional[MemoryType] = None,
+        tags: Optional[list[str]] = None,
+        salience: Optional[float] = None,
+        agent_id: str = DEFAULT_AGENT_ID,
+        session_id: Optional[str] = None,
+        visibility: Visibility = Visibility.SHARED,
+    ) -> list[Optional[MemoryNode]]:
+        """Store multiple memories efficiently.
+
+        Used by ingestion adapters. Each node still goes through:
+        - Thalamus gating (dedup/noise filter)
+        - Semantic enrichment
+        - Amygdala emotion tagging
+        - StorageCoordinator dual-write
+        - Lightweight auto-linking (tags only, no vector search)
+
+        Args:
+            contents: List of memory content strings.
+            memory_type: Override automatic type classification.
+            tags: Tags for categorization.
+            salience: Override automatic salience estimation.
+            agent_id: Agent storing these memories.
+            session_id: Current session ID.
+            visibility: Sharing scope.
+
+        Returns:
+            List of MemoryNodes (or None if gated out).
+        """
+        results: list[Optional[MemoryNode]] = []
+        for content in contents:
+            node = self.remember(
+                content=content,
+                memory_type=memory_type,
+                tags=tags,
+                salience=salience,
+                agent_id=agent_id,
+                session_id=session_id,
+                visibility=visibility,
+            )
+            results.append(node)
+        return results
 
     # =========================================================================
     # SEND MESSAGE - Direct agent-to-agent communication
@@ -379,10 +454,9 @@ class CerebroCortex:
             created_at=node.created_at,
         )
 
-        # Dual-write to graph + vector store
-        self._graph.add_node(node)
-        coll = self._collection_for_type(node.metadata.memory_type)
-        self._chroma.add_node(coll, node)
+        # Persist via StorageCoordinator
+        coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+        self._coordinator.store_node(node, collection=coll)
 
         # Auto-link
         self.links.auto_link_on_store(node)
@@ -459,15 +533,18 @@ class CerebroCortex:
         context_ids: Optional[list[str]] = None,
         conversation_thread: Optional[str] = None,
         explain: bool = False,
+        include_vision: bool = False,
+        offset: int = 0,
     ) -> list[tuple]:
         """Recall memories through the full retrieval pipeline.
 
         Pipeline:
         1. Vector search via ChromaDB (semantic seeds)
         2. Spreading activation from seeds + context
-        3. ACT-R + FSRS combined scoring
-        4. Hebbian strengthening of recalled paths
-        5. Update access timestamps
+        3. Optional cross-modal vision search
+        4. ACT-R + FSRS combined scoring
+        5. Hebbian strengthening of recalled paths
+        6. Update access timestamps
 
         Args:
             query: Search query text
@@ -478,6 +555,8 @@ class CerebroCortex:
             context_ids: Memory IDs to use as activation seeds
             conversation_thread: Thread ID for THREAD-visibility matching
             explain: If True, return (MemoryNode, score, explanation_dict) tuples
+            include_vision: If True, also search the vision sidecar collection
+                and merge results (requires [vision] extras).
 
         Returns:
             List of (MemoryNode, score) or (MemoryNode, score, dict) tuples,
@@ -527,6 +606,45 @@ class CerebroCortex:
         # 3. Merge candidates: vector hits + activated nodes
         candidate_ids = list(set(vector_results.keys()) | set(activated.keys()))
 
+        # 3b. Cross-modal vision search
+        if include_vision and self._vision_store is not None:
+            try:
+                vision_hits = self._vision_store.search_by_text(query, n_results=per_collection)
+                for hit in vision_hits:
+                    mem_id = hit.get("memory_id")
+                    if not mem_id:
+                        continue
+                    # ChromaDB cosine distance -> similarity
+                    vision_sim = max(0.0, 1.0 - hit.get("distance", 1.0))
+                    if mem_id in vector_results:
+                        # Boost existing text score
+                        vector_results[mem_id] = max(
+                            vector_results[mem_id], vision_sim * 0.9
+                        )
+                    else:
+                        # New candidate from vision search (slight penalty)
+                        vector_results[mem_id] = vision_sim * 0.85
+                        candidate_ids.append(mem_id)
+            except Exception as exc:
+                logger.debug(f"Vision search failed during recall: {exc}")
+
+        # 3c. Keyword fallback: if vector search returned nothing, try FTS5
+        if not candidate_ids:
+            try:
+                fts_rows = self._graph.conn.execute(
+                    "SELECT rowid FROM memory_nodes_fts WHERE content MATCH ?",
+                    (query,)
+                ).fetchall()
+                for row in fts_rows:
+                    node_row = self._graph.conn.execute(
+                        "SELECT id FROM memory_nodes WHERE rowid=?", (row["rowid"],)
+                    ).fetchone()
+                    if node_row:
+                        candidate_ids.append(node_row["id"])
+                        vector_results[node_row["id"]] = 0.5  # neutral similarity for FTS hits
+            except sqlite3.OperationalError:
+                pass  # FTS5 not available or table missing
+
         # Filter by type/scope/salience (belt-and-suspenders with ChromaDB where)
         filtered_ids = []
         for mid in candidate_ids:
@@ -549,8 +667,11 @@ class CerebroCortex:
             explain=explain,
         )
 
-        # Take top_k
-        top_results = ranked[:top_k]
+        # Take top_k with offset
+        if offset > 0:
+            top_results = ranked[offset:offset + top_k]
+        else:
+            top_results = ranked[:top_k]
 
         # 5. Hebbian strengthening of co-activated memories
         result_ids = [r[0] for r in top_results]
@@ -628,12 +749,14 @@ class CerebroCortex:
         self,
         memory_id: str,
         agent_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[MemoryNode]:
         """Get a single memory by ID.
 
         If agent_id is provided, returns None when the agent lacks access.
+        If include_deleted is True, can retrieve soft-deleted memories.
         """
-        node = self._graph.get_node(memory_id)
+        node = self._graph.get_node(memory_id, include_deleted=include_deleted)
         if not node:
             return None
         if not self._can_access(node, agent_id):
@@ -644,8 +767,12 @@ class CerebroCortex:
         self,
         memory_id: str,
         agent_id: Optional[str] = None,
+        hard: bool = False,
     ) -> bool:
         """Delete a memory from both GraphStore and ChromaDB.
+
+        By default, performs a soft delete (sets deleted_at). Use hard=True
+        for permanent removal.
 
         If agent_id is provided, only the owner can delete.
         Returns True if found and deleted.
@@ -656,14 +783,82 @@ class CerebroCortex:
         if not self._can_access(node, agent_id):
             return False
 
-        # Delete from graph store (SQLite + igraph rebuild)
-        self._graph.delete_node(memory_id)
-
-        # Delete from ChromaDB
-        coll = self._collection_for_type(node.metadata.memory_type)
-        self._chroma.delete(coll, [memory_id])
+        # Delete via StorageCoordinator (SQLite SOT + ChromaDB index)
+        coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+        self._coordinator.delete_node(memory_id, collection=coll, soft=not hard)
 
         return True
+
+    def restore_memory(self, memory_id: str, agent_id: Optional[str] = None) -> bool:
+        """Undelete a soft-deleted memory.
+
+        Returns True if the memory was restored.
+        """
+        node = self._graph.get_node(memory_id, include_deleted=True)
+        if not node:
+            return False
+        if not self._can_access(node, agent_id):
+            return False
+        if node.metadata.deleted_at is None:
+            return False
+        restored = self._graph.restore_node(memory_id)
+        if restored:
+            # Re-add to ChromaDB
+            coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+            try:
+                self._chroma.add_node(coll, node)
+            except Exception as exc:
+                logger.warning(f"ChromaDB re-add failed for restored {memory_id}: {exc}")
+                self._coordinator.queue_for_backfill(memory_id)
+        return restored
+
+    def purge_memory(self, memory_id: str, agent_id: Optional[str] = None) -> bool:
+        """Permanently delete a memory, bypassing soft-delete.
+
+        Returns True if the memory was purged.
+        """
+        node = self._graph.get_node(memory_id, include_deleted=True)
+        if not node:
+            return False
+        if not self._can_access(node, agent_id):
+            return False
+        coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+        return self._coordinator.delete_node(memory_id, collection=coll, soft=False)
+
+    def list_deleted(
+        self,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[MemoryNode]:
+        """List soft-deleted memories."""
+        nodes = self._graph.list_deleted(agent_id=agent_id, limit=limit)
+        return [n for n in nodes if self._can_access(n, agent_id)]
+
+    def purge_all_deleted(self, agent_id: Optional[str] = None, older_than_days: int = 30) -> int:
+        """Hard-delete all soft-deleted memories older than N days.
+
+        If agent_id is provided, only purges memories belonging to that agent.
+        Returns the number of purged memories.
+        """
+        if agent_id:
+            # Agent-scoped purge: list their deleted memories, filter by age, purge individually
+            deleted = self.list_deleted(agent_id=agent_id, limit=10000)
+            purged = 0
+            cutoff = __import__("time").time() - (older_than_days * 86400)
+            for node in deleted:
+                # deleted_at is an ISO string; compare roughly
+                if node.metadata.deleted_at:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(node.metadata.deleted_at)
+                        if dt.timestamp() < cutoff:
+                            if self.purge_memory(node.id, agent_id=agent_id):
+                                purged += 1
+                    except Exception:
+                        pass
+            return purged
+        else:
+            return self._graph.purge_deleted_older_than(older_than_days)
 
     def update_memory(
         self,
@@ -676,6 +871,7 @@ class CerebroCortex:
     ) -> Optional[MemoryNode]:
         """Update a memory's content and/or metadata.
 
+        If content changes, a version snapshot is saved before updating.
         If agent_id is provided, checks access before updating.
         If content is provided, re-embeds in ChromaDB.
         Returns the updated MemoryNode, or None if not found or access denied.
@@ -685,6 +881,10 @@ class CerebroCortex:
             return None
         if not self._can_access(node, agent_id):
             return None
+
+        # Snapshot current state before content change
+        if content is not None and content != node.content:
+            self._graph.save_version(node, edited_by=agent_id)
 
         # Build metadata updates
         meta_updates = {}
@@ -709,16 +909,167 @@ class CerebroCortex:
 
         # Re-fetch updated node
         updated = self._graph.get_node(memory_id)
+        if updated is None:
+            return None
 
-        # Sync to ChromaDB (re-embeds if content changed)
-        coll = self._collection_for_type(updated.metadata.memory_type)
-        self._chroma.update_node(coll, updated)
+        # Sync to ChromaDB via StorageCoordinator (handles collection migration)
+        old_coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+        new_coll = StorageCoordinator.collection_for_type(updated.metadata.memory_type)
+        self._coordinator.update_node(
+            updated, collection=new_coll,
+            old_collection=old_coll if old_coll != new_coll else None,
+        )
 
         # Prune cross-agent links when visibility changes to PRIVATE
         if visibility == Visibility.PRIVATE:
             self._prune_cross_agent_links(memory_id, updated.metadata.agent_id)
 
         return updated
+
+    def get_memory_versions(self, memory_id: str, limit: int = 10) -> list[dict]:
+        """Get version history for a memory."""
+        return self._graph.get_memory_versions(memory_id, limit=limit)
+
+    def restore_version(self, version_id: int, agent_id: Optional[str] = None) -> Optional[MemoryNode]:
+        """Restore a memory to a previous version.
+
+        Applies the old content/tags/salience/visibility as an update,
+        which itself creates a new version snapshot.
+        """
+        version = self._graph.get_version(version_id)
+        if not version:
+            return None
+        memory_id = version["memory_id"]
+        node = self._graph.get_node(memory_id)
+        if not node:
+            return None
+        if not self._can_access(node, agent_id):
+            return None
+        return self.update_memory(
+            memory_id,
+            content=version["content"],
+            tags=json.loads(version["tags_json"]),
+            salience=version["salience"],
+            visibility=Visibility(version["visibility"]),
+            agent_id=agent_id,
+        )
+
+    # =========================================================================
+    # Bulk operations
+    # =========================================================================
+
+    def bulk_update_visibility(
+        self,
+        memory_ids: list[str],
+        visibility: Visibility,
+        agent_id: Optional[str] = None,
+    ) -> list[str]:
+        """Update visibility for multiple memories. Only affects memories the agent can access."""
+        updated: list[str] = []
+        for mid in memory_ids:
+            node = self.get_memory(mid, agent_id=agent_id)
+            if node:
+                result = self.update_memory(mid, visibility=visibility, agent_id=agent_id)
+                if result:
+                    updated.append(mid)
+        return updated
+
+    def bulk_delete(
+        self,
+        memory_ids: list[str],
+        soft: bool = True,
+        agent_id: Optional[str] = None,
+    ) -> list[str]:
+        """Delete multiple memories. Defaults to soft delete."""
+        deleted: list[str] = []
+        for mid in memory_ids:
+            if self.delete_memory(mid, agent_id=agent_id, hard=not soft):
+                deleted.append(mid)
+        return deleted
+
+    def export_memories(
+        self,
+        memory_ids: Optional[list[str]] = None,
+        agent_id: Optional[str] = None,
+        fmt: str = "json",
+    ) -> str:
+        """Export memories to a string. If memory_ids is None, exports all visible memories."""
+        if memory_ids is None:
+            ids = self._graph.get_all_node_ids(agent_id=agent_id)
+        else:
+            ids = memory_ids
+
+        nodes: list = []
+        for mid in ids:
+            node = self.get_memory(mid, agent_id=agent_id)
+            if node:
+                nodes.append(node)
+
+        if fmt == "json":
+            return json.dumps([n.model_dump() for n in nodes], indent=2, default=str)
+        elif fmt == "markdown":
+            lines = ["# Exported Memories\n"]
+            for node in nodes:
+                lines.append(f"## {node.id}")
+                lines.append(f"**Type:** {node.metadata.memory_type.value}")
+                lines.append(f"**Tags:** {', '.join(node.metadata.tags)}")
+                lines.append(f"**Salience:** {node.metadata.salience}")
+                lines.append(f"**Created:** {node.created_at.isoformat()}")
+                lines.append("")
+                lines.append(node.content)
+                lines.append("---\n")
+            return "\n".join(lines)
+        else:
+            raise ValueError(f"Unsupported export format: {fmt}")
+
+    # =========================================================================
+    # Thread management
+    # =========================================================================
+
+    def list_threads(
+        self,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """List distinct conversation threads with memory counts."""
+        query = (
+            "SELECT conversation_thread, COUNT(*) as c FROM memory_nodes "
+            "WHERE deleted_at IS NULL AND conversation_thread IS NOT NULL AND conversation_thread != ''"
+        )
+        params: list = []
+        if agent_id:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        query += " GROUP BY conversation_thread ORDER BY c DESC LIMIT ?"
+        params.append(limit)
+        rows = self._graph.conn.execute(query, params).fetchall()
+        return [{"thread_id": r["conversation_thread"], "memory_count": r["c"]} for r in rows]
+
+    def get_thread_memories(
+        self,
+        thread_id: str,
+        limit: int = 100,
+    ) -> list[tuple]:
+        """Get all memories in a thread, newest first."""
+        rows = self._graph.conn.execute(
+            "SELECT id FROM memory_nodes WHERE deleted_at IS NULL AND conversation_thread = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (thread_id, limit),
+        ).fetchall()
+        results: list[tuple] = []
+        for r in rows:
+            node = self._graph.get_node(r["id"])
+            if node:
+                results.append((node, 1.0))
+        return results
+
+    def prune_thread(self, thread_id: str, agent_id: Optional[str] = None) -> int:
+        """Soft-delete all memories in a thread."""
+        rows = self._graph.conn.execute(
+            "SELECT id FROM memory_nodes WHERE deleted_at IS NULL AND conversation_thread = ?",
+            (thread_id,),
+        ).fetchall()
+        return len(self.bulk_delete([r["id"] for r in rows], soft=True, agent_id=agent_id))
 
     def _prune_cross_agent_links(self, memory_id: str, owner_agent_id: str) -> int:
         """Remove links where the PRIVATE memory crosses agent boundaries.
@@ -1041,9 +1392,9 @@ class CerebroCortex:
             node = self._graph.get_node(nid)
             if node is None:
                 continue
-            coll = self._collection_for_type(node.metadata.memory_type)
+            coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
             try:
-                self._chroma.add_node(coll, node)
+                self._coordinator.update_node(node, collection=coll)
                 counts[coll] = counts.get(coll, 0) + 1
             except Exception as e:
                 logger.error(f"Backfill failed for {nid}: {e}")

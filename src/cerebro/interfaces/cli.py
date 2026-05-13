@@ -959,6 +959,54 @@ def dream_status(as_json):
         click.echo(f"  Success:  {report.success}")
 
 
+@dream.command("watch")
+@click.option("--interval-hours", default=24, help="Hours between dream cycles")
+@click.option("--max-cycles", default=0, help="Max cycles to run (0 = infinite)")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def dream_watch(interval_hours, max_cycles, as_json):
+    """Run the dream engine on a schedule (blocks until interrupted)."""
+    import time as _time
+    ctx = get_cortex()
+
+    from cerebro.engines.dream import DreamEngine
+    try:
+        from cerebro.utils.llm import LLMClient
+        llm = LLMClient()
+    except Exception:
+        llm = None
+        click.echo("Warning: No LLM available. LLM-assisted phases will be skipped.", err=True)
+
+    engine = DreamEngine(ctx, llm_client=llm)
+    cycle = 0
+
+    click.echo(f"Dream watch started: interval={interval_hours}h, max_cycles={max_cycles or 'infinite'}")
+    click.echo("Press Ctrl+C to stop.\n")
+
+    try:
+        while True:
+            cycle += 1
+            if max_cycles > 0 and cycle > max_cycles:
+                click.echo(f"Reached max cycles ({max_cycles}). Stopping.")
+                break
+
+            click.echo(f"[{cycle}] Running dream cycle at {_time.strftime('%Y-%m-%d %H:%M:%S')}...")
+            reports = engine.run_all_agents_cycle()
+
+            if as_json:
+                _json_out([r.to_dict() for r in reports])
+            else:
+                for report in reports:
+                    agent_label = report.agent_id or "unscoped"
+                    click.echo(f"  {agent_label}: {report.total_duration_seconds:.1f}s, "
+                               f"{report.episodes_consolidated} episodes, "
+                               f"{'OK' if report.success else 'FAIL'}")
+
+            if max_cycles == 0 or cycle < max_cycles:
+                click.echo(f"  Sleeping {interval_hours}h...")
+                _time.sleep(interval_hours * 3600)
+    except KeyboardInterrupt:
+        click.echo("\nDream watch stopped.")
+
 
 # =============================================================================
 # Graph Exploration (Phase D)

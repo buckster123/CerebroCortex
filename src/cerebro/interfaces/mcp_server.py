@@ -588,15 +588,225 @@ TOOL_SCHEMAS: dict[str, dict] = {
     # File ingestion
     # -----------------------------------------------------------------
     "ingest_file": {
-        "description": "Read a file and store its contents as searchable memories. Supports .md, .json, .txt, and common code files. Large files are automatically split into sections.",
+        "description": "Read a file and store its contents as searchable memories. Supports text, markdown, JSON, images (PNG/JPG/WebP), PDFs, HTML, and CSV. Large files are automatically split into sections. Images get captions, OCR text, and optional vision embeddings.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "file_path": {"type": "string", "description": "Absolute path to the file"},
                 "tags": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}], "description": "Tags to apply to all imported memories"},
                 "agent_id": {"type": "string", "description": "Agent performing the import"},
+                "session_id": {"type": "string", "description": "Session ID for episode tracking"},
             },
             "required": ["file_path"],
+        },
+    },
+    "describe_image": {
+        "description": "Generate a text description of an image file without storing it in memory. Uses local vision model (Ollama) or filename fallback.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "image_path": {"type": "string", "description": "Absolute path to the image file"},
+            },
+            "required": ["image_path"],
+        },
+    },
+    "search_vision": {
+        "description": "Search image memories by text description or find similar images. Requires vision extras installed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query_text": {"type": "string", "description": "Text query to search image memories"},
+                "image_path": {"type": "string", "description": "Path to an image to use as query (image-to-image search)"},
+                "top_k": {"type": "integer", "description": "Max results (default: 10)"},
+            },
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # CRUD: Trash can
+    # -----------------------------------------------------------------
+    "list_deleted": {
+        "description": "List soft-deleted memories that can be restored.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+                "limit": {"type": "integer", "description": "Max results (default: 50)"},
+            },
+            "required": [],
+        },
+    },
+    "restore_memory": {
+        "description": "Undelete a soft-deleted memory and re-add it to the vector index.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to restore"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+    "purge_memory": {
+        "description": "Permanently delete a memory, bypassing the trash can.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to permanently delete"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+    "purge_all_deleted": {
+        "description": "Hard-delete all soft-deleted memories older than N days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Only purge this agent's deleted memories"},
+                "older_than_days": {"type": "integer", "description": "Age threshold in days (default: 30)"},
+            },
+            "required": [],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # CRUD: Versions
+    # -----------------------------------------------------------------
+    "get_memory_versions": {
+        "description": "Get version history for a memory. Each content change creates a snapshot.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID"},
+                "limit": {"type": "integer", "description": "Max versions to return (default: 10)"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+    "restore_version": {
+        "description": "Restore a memory to a previous version snapshot.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "integer", "description": "Version row ID from get_memory_versions"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
+            },
+            "required": ["version_id"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Tag management
+    # -----------------------------------------------------------------
+    "list_tags": {
+        "description": "List all tags with usage counts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+            },
+            "required": [],
+        },
+    },
+    "rename_tag": {
+        "description": "Rename a tag across all memories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "old_tag": {"type": "string", "description": "Current tag name"},
+                "new_tag": {"type": "string", "description": "New tag name"},
+                "agent_id": {"type": "string", "description": "Only rename for this agent"},
+            },
+            "required": ["old_tag", "new_tag"],
+        },
+    },
+    "merge_tags": {
+        "description": "Merge multiple tags into one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to merge"},
+                "target_tag": {"type": "string", "description": "Destination tag"},
+                "agent_id": {"type": "string", "description": "Only merge for this agent"},
+            },
+            "required": ["source_tags", "target_tag"],
+        },
+    },
+    "delete_tag": {
+        "description": "Remove a tag from all memories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tag": {"type": "string", "description": "Tag to remove"},
+                "agent_id": {"type": "string", "description": "Only remove for this agent"},
+            },
+            "required": ["tag"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Bulk operations
+    # -----------------------------------------------------------------
+    "bulk_delete": {
+        "description": "Delete multiple memories at once. Defaults to soft delete.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "Memory IDs to delete"},
+                "hard": {"type": "boolean", "description": "If true, permanently delete"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
+            },
+            "required": ["memory_ids"],
+        },
+    },
+    "export_memories": {
+        "description": "Export memories to JSON or Markdown.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "Specific memory IDs (omit for all visible)"},
+                "agent_id": {"type": "string", "description": "Agent ID for scope"},
+                "format": {"type": "string", "enum": ["json", "markdown"], "description": "Export format"},
+            },
+            "required": [],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Thread management
+    # -----------------------------------------------------------------
+    "list_threads": {
+        "description": "List conversation threads with memory counts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Filter by agent"},
+                "limit": {"type": "integer", "description": "Max threads (default: 50)"},
+            },
+            "required": [],
+        },
+    },
+    "get_thread_memories": {
+        "description": "Get all memories in a conversation thread.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string", "description": "Conversation thread ID"},
+                "limit": {"type": "integer", "description": "Max memories (default: 100)"},
+            },
+            "required": ["thread_id"],
+        },
+    },
+    "prune_thread": {
+        "description": "Soft-delete all memories in a conversation thread.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string", "description": "Thread ID to prune"},
+                "agent_id": {"type": "string", "description": "Agent ID for access check"},
+            },
+            "required": ["thread_id"],
         },
     },
 
@@ -836,6 +1046,57 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "ingest_file":
             return await _handle_ingest_file(cortex, arguments)
+
+        elif name == "describe_image":
+            return await _handle_describe_image(cortex, arguments)
+
+        elif name == "search_vision":
+            return await _handle_search_vision(cortex, arguments)
+
+        elif name == "list_deleted":
+            return await _handle_list_deleted(cortex, arguments)
+
+        elif name == "restore_memory":
+            return await _handle_restore_memory(cortex, arguments)
+
+        elif name == "purge_memory":
+            return await _handle_purge_memory(cortex, arguments)
+
+        elif name == "purge_all_deleted":
+            return await _handle_purge_all_deleted(cortex, arguments)
+
+        elif name == "get_memory_versions":
+            return await _handle_get_memory_versions(cortex, arguments)
+
+        elif name == "restore_version":
+            return await _handle_restore_version(cortex, arguments)
+
+        elif name == "list_tags":
+            return await _handle_list_tags(cortex, arguments)
+
+        elif name == "rename_tag":
+            return await _handle_rename_tag(cortex, arguments)
+
+        elif name == "merge_tags":
+            return await _handle_merge_tags(cortex, arguments)
+
+        elif name == "delete_tag":
+            return await _handle_delete_tag(cortex, arguments)
+
+        elif name == "bulk_delete":
+            return await _handle_bulk_delete(cortex, arguments)
+
+        elif name == "export_memories":
+            return await _handle_export_memories(cortex, arguments)
+
+        elif name == "list_threads":
+            return await _handle_list_threads(cortex, arguments)
+
+        elif name == "get_thread_memories":
+            return await _handle_get_thread_memories(cortex, arguments)
+
+        elif name == "prune_thread":
+            return await _handle_prune_thread(cortex, arguments)
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -1598,40 +1859,237 @@ async def _handle_ingest_file(cortex: CerebroCortex, args: dict) -> list[TextCon
     if not file_path.is_file():
         return [TextContent(type="text", text=f"Not a file: {file_path}")]
 
-    suffix = file_path.suffix.lower()
-    tags = list(_coerce_array(args.get("tags")) or [])
-    tags.append(f"source:{file_path.name}")
+    from cerebro.ingestion import IngestionPipeline
 
-    try:
-        if suffix == ".md":
-            from cerebro.migration.markdown_import import MarkdownImporter
-            importer = MarkdownImporter(cortex)
-            report = importer.import_file(file_path)
-        elif suffix == ".json":
-            from cerebro.migration.json_import import JSONImporter
-            importer = JSONImporter(cortex)
-            report = importer.import_file(file_path)
-        else:
-            from cerebro.migration.text_import import TextImporter
-            importer = TextImporter(cortex)
-            report = importer.import_file(
-                file_path,
-                tags=tags,
-                agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
-            )
+    pipeline = IngestionPipeline(cortex)
+    report = pipeline.ingest_file(
+        file_path,
+        tags=_coerce_array(args.get("tags")),
+        agent_id=args.get("agent_id", DEFAULT_AGENT_ID),
+        session_id=args.get("session_id"),
+    )
 
+    parts = [
+        f"Ingested {file_path.name}: {report.memories_imported} memories stored",
+    ]
+    if report.attachments_created:
+        parts.append(f"{len(report.attachments_created)} attachments created")
+    if report.memories_skipped:
+        parts.append(f"{report.memories_skipped} skipped")
+    if report.errors:
+        parts.append(f"{len(report.errors)} errors: {'; '.join(report.errors[:3])}")
+    parts.append(f"({report.duration_seconds:.1f}s)")
+
+    return [TextContent(type="text", text=" | ".join(parts))]
+
+
+async def _handle_describe_image(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    from cerebro.ingestion.image_adapter import ImageAdapter
+
+    path = Path(args["image_path"])
+    if not path.exists():
+        return [TextContent(type="text", text=f"Image not found: {path}")]
+
+    adapter = ImageAdapter()
+    caption = adapter._caption_image(path)
+    ocr_text = adapter._ocr_image(path)
+
+    lines = [f"Caption: {caption}"]
+    if ocr_text:
+        lines.append(f"OCR text: {ocr_text}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_search_vision(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    if cortex._vision_store is None:
         return [TextContent(
             type="text",
-            text=(
-                f"Ingested {file_path.name}: "
-                f"{report.memories_imported} memories stored, "
-                f"{report.memories_skipped} skipped"
-                f"{', ' + str(len(report.errors)) + ' errors' if report.errors else ''}"
-                f" ({report.duration_seconds:.1f}s)"
-            ),
+            text="Vision search not available. Install with: pip install cerebro-cortex[vision]"
         )]
-    except Exception as e:
-        return [TextContent(type="text", text=f"Failed to ingest {file_path.name}: {e}")]
+
+    top_k = args.get("top_k", 10)
+    results: list[dict] = []
+
+    if args.get("image_path"):
+        path = Path(args["image_path"])
+        if not path.exists():
+            return [TextContent(type="text", text=f"Image not found: {path}")]
+        results = cortex._vision_store.search_by_image(path, n_results=top_k)
+    elif args.get("query_text"):
+        results = cortex._vision_store.search_by_text(args["query_text"], n_results=top_k)
+    else:
+        return [TextContent(type="text", text="Provide either query_text or image_path.")]
+
+    if not results:
+        return [TextContent(type="text", text="No vision matches found.")]
+
+    lines = [f"**Found {len(results)} vision matches:**\n"]
+    for i, hit in enumerate(results, 1):
+        mem_id = hit.get("memory_id", "unknown")
+        dist = hit.get("distance", 1.0)
+        sim = max(0.0, 1.0 - dist)
+        node = cortex.get_memory(mem_id) if mem_id != "unknown" else None
+        preview = node.content[:120] + "..." if node and len(node.content) > 120 else (node.content if node else "")
+        att_info = ""
+        if node and node.metadata.attachments:
+            att = node.metadata.attachments[0]
+            att_info = f" | file: {att.file_path or 'unknown'}"
+        lines.append(f"{i}. [{mem_id}] similarity={sim:.3f} {preview}{att_info}")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+# =============================================================================
+# CRUD handlers
+# =============================================================================
+
+async def _handle_list_deleted(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    nodes = cortex.list_deleted(
+        agent_id=args.get("agent_id"),
+        limit=args.get("limit", 50),
+    )
+    if not nodes:
+        return [TextContent(type="text", text="No deleted memories found.")]
+    lines = [f"**{len(nodes)} deleted memory(s):**\n"]
+    for node in nodes:
+        dt = node.metadata.deleted_at or "unknown"
+        lines.append(f"- [{node.id}] deleted_at={dt} | {node.content[:100]}...")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_restore_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    ok = cortex.restore_memory(args["memory_id"], agent_id=args.get("agent_id"))
+    if ok:
+        return [TextContent(type="text", text=f"Restored memory {args['memory_id']}.")]
+    return [TextContent(type="text", text=f"Failed to restore {args['memory_id']}.")]
+
+
+async def _handle_purge_memory(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    ok = cortex.purge_memory(args["memory_id"], agent_id=args.get("agent_id"))
+    if ok:
+        return [TextContent(type="text", text=f"Permanently deleted {args['memory_id']}.")]
+    return [TextContent(type="text", text=f"Failed to purge {args['memory_id']}.")]
+
+
+async def _handle_purge_all_deleted(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    count = cortex.purge_all_deleted(
+        agent_id=args.get("agent_id"),
+        older_than_days=args.get("older_than_days", 30),
+    )
+    return [TextContent(type="text", text=f"Purged {count} deleted memories.")]
+
+
+async def _handle_get_memory_versions(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    versions = cortex.get_memory_versions(
+        args["memory_id"],
+        limit=args.get("limit", 10),
+    )
+    if not versions:
+        return [TextContent(type="text", text="No versions found.")]
+    lines = [f"**{len(versions)} version(s) for {args['memory_id']}:**\n"]
+    for v in versions:
+        lines.append(
+            f"- v{v['id']} ({v['edited_at']}) salience={v['salience']:.2f} "
+            f"visibility={v['visibility']} | {v['content'][:80]}..."
+        )
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_restore_version(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    node = cortex.restore_version(args["version_id"], agent_id=args.get("agent_id"))
+    if node:
+        return [TextContent(type="text", text=f"Restored version to memory {node.id}.")]
+    return [TextContent(type="text", text="Failed to restore version.")]
+
+
+async def _handle_list_tags(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    tags = cortex.tag_manager.list_tags(agent_id=args.get("agent_id"))
+    if not tags:
+        return [TextContent(type="text", text="No tags found.")]
+    lines = [f"**{len(tags)} tag(s):**\n"]
+    for tag, count in sorted(tags.items(), key=lambda x: -x[1]):
+        lines.append(f"- {tag}: {count}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_rename_tag(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    updated = cortex.tag_manager.rename_tag(
+        old=args["old_tag"],
+        new=args["new_tag"],
+        agent_id=args.get("agent_id"),
+    )
+    return [TextContent(type="text", text=f"Renamed tag in {updated} memories.")]
+
+
+async def _handle_merge_tags(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    updated = cortex.tag_manager.merge_tags(
+        source_tags=_coerce_array(args["source_tags"]) or [],
+        target_tag=args["target_tag"],
+        agent_id=args.get("agent_id"),
+    )
+    return [TextContent(type="text", text=f"Merged tags in {updated} memories.")]
+
+
+async def _handle_delete_tag(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    updated = cortex.tag_manager.delete_tag(
+        tag=args["tag"],
+        agent_id=args.get("agent_id"),
+    )
+    return [TextContent(type="text", text=f"Deleted tag from {updated} memories.")]
+
+
+async def _handle_bulk_delete(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    ids = _coerce_array(args["memory_ids"]) or []
+    deleted = cortex.bulk_delete(
+        memory_ids=ids,
+        soft=not args.get("hard", False),
+        agent_id=args.get("agent_id"),
+    )
+    return [TextContent(type="text", text=f"Deleted {len(deleted)} / {len(ids)} memories.")]
+
+
+async def _handle_export_memories(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    ids = _coerce_array(args.get("memory_ids"))
+    output = cortex.export_memories(
+        memory_ids=ids,
+        agent_id=args.get("agent_id"),
+        fmt=args.get("format", "json"),
+    )
+    return [TextContent(type="text", text=output[:4000])]
+
+
+async def _handle_list_threads(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    threads = cortex.list_threads(
+        agent_id=args.get("agent_id"),
+        limit=args.get("limit", 50),
+    )
+    if not threads:
+        return [TextContent(type="text", text="No threads found.")]
+    lines = [f"**{len(threads)} thread(s):**\n"]
+    for t in threads:
+        lines.append(f"- {t['thread_id']}: {t['memory_count']} memories")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_get_thread_memories(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    results = cortex.get_thread_memories(
+        thread_id=args["thread_id"],
+        limit=args.get("limit", 100),
+    )
+    if not results:
+        return [TextContent(type="text", text="No memories in thread.")]
+    lines = [f"**{len(results)} memory(s) in thread {args['thread_id']}:**\n"]
+    for node, _ in results:
+        lines.append(f"- [{node.id}] {node.content[:120]}...")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_prune_thread(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    count = cortex.prune_thread(
+        thread_id=args["thread_id"],
+        agent_id=args.get("agent_id"),
+    )
+    return [TextContent(type="text", text=f"Soft-deleted {count} memories from thread {args['thread_id']}.")]
 
 
 # =============================================================================

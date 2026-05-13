@@ -220,11 +220,14 @@ class RememberRequest(BaseModel):
 class RecallRequest(BaseModel):
     query: str
     top_k: int = 10
+    offset: int = 0
     memory_types: Optional[list[str]] = None
     agent_id: Optional[str] = None
     min_salience: float = 0.0
     context_ids: Optional[list[str]] = None
     conversation_thread: Optional[str] = None
+    explain: bool = False
+    include_vision: bool = False
 
 class AssociateRequest(BaseModel):
     source_id: str
@@ -456,18 +459,35 @@ async def recall(req: RecallRequest):
     results = ctx.recall(
         query=req.query,
         top_k=req.top_k,
+        offset=req.offset,
         memory_types=memory_types,
         agent_id=req.agent_id,
         min_salience=req.min_salience,
         context_ids=req.context_ids,
         conversation_thread=req.conversation_thread,
+        explain=req.explain,
+        include_vision=req.include_vision,
     )
 
-    return {
-        "query": req.query,
-        "count": len(results),
-        "results": [
-            {
+    def _fmt_result(entry):
+        if len(entry) == 3:
+            node, score, breakdown = entry
+            base = {
+                "id": node.id,
+                "content": node.content,
+                "type": node.metadata.memory_type.value,
+                "layer": node.metadata.layer.value,
+                "salience": round(node.metadata.salience, 3),
+                "valence": node.metadata.valence.value if hasattr(node.metadata.valence, "value") else str(node.metadata.valence),
+                "score": round(score, 4),
+                "tags": node.metadata.tags,
+                "concepts": node.metadata.concepts[:5],
+                "created_at": node.created_at.isoformat(),
+                "score_breakdown": breakdown,
+            }
+        else:
+            node, score = entry
+            base = {
                 "id": node.id,
                 "content": node.content,
                 "type": node.metadata.memory_type.value,
@@ -479,8 +499,12 @@ async def recall(req: RecallRequest):
                 "concepts": node.metadata.concepts[:5],
                 "created_at": node.created_at.isoformat(),
             }
-            for node, score in results
-        ],
+        return base
+
+    return {
+        "query": req.query,
+        "count": len(results),
+        "results": [_fmt_result(r) for r in results],
     }
 
 

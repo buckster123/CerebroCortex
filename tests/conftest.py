@@ -7,6 +7,7 @@ import pytest
 
 from cerebro.cortex import CerebroCortex
 from cerebro.models.memory import MemoryMetadata, MemoryNode
+from cerebro.storage.coordinator import StorageCoordinator
 from cerebro.types import EmotionalValence, MemoryType, Visibility
 
 
@@ -133,7 +134,7 @@ def multi_agent_cortex():
             salience=0.8,
         )
 
-        # Manually create a THREAD-scoped memory via graph store
+        # Manually create a THREAD-scoped memory via coordinator
         thread_node = MemoryNode(
             id="mem_scope_thread_01",
             content="Thread conversation about deployment strategy between Alice and Bob",
@@ -146,9 +147,8 @@ def multi_agent_cortex():
                 salience=0.8,
             ),
         )
-        ctx.graph.add_node(thread_node)
-        coll = ctx._collection_for_type(thread_node.metadata.memory_type)
-        ctx.vector.add_node(coll, thread_node)
+        coll = StorageCoordinator.collection_for_type(thread_node.metadata.memory_type)
+        ctx.coordinator.store_node(thread_node, collection=coll)
 
         yield {
             "cortex": ctx,

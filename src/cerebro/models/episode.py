@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from cerebro.types import EmotionalValence
 
@@ -51,4 +51,6 @@ class Episode(BaseModel):
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
+    @field_serializer("started_at", "ended_at", "created_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat() if value else ""

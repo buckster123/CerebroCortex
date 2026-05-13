@@ -5,7 +5,80 @@ All notable changes to CerebroCortex are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] — 2026-04-22
+## [0.4.0] — 2026-05-13
+
+### Added
+
+- **Unified StorageCoordinator** (`cerebro.storage.coordinator.StorageCoordinator`). SQLite is now the single source of truth; ChromaDB is a rebuildable index. All writes route through `StorageCoordinator`, which writes SQLite first and queues ChromaDB backfill on failure. Prevents silent data divergence between graph and vector stores.
+  - `backfill_pending()` recovers from transient ChromaDB failures at startup.
+  - All 8 dual-write sites migrated: `cortex.py`, `prefrontal.py`, `cerebellum.py`, `neocortex.py`, `text_import.py`, `markdown_import.py`, `json_import.py`, `neo_cortex_import.py`.
+
+- **Unified Ingestion Pipeline** (`cerebro.ingestion`). Pluggable adapter system for importing documents into the full encoding pipeline (no bypassing Thalamus/Semantic/Amygdala).
+  - **7 adapters**: `TextAdapter`, `MarkdownAdapter`, `JSONAdapter`, `ImageAdapter`, `PDFAdapter`, `HTMLAdapter`, `CSVAdapter`.
+  - Priority ordering: Image > PDF > HTML > CSV > Markdown > JSON > Text.
+  - `cortex.bulk_remember()` for efficient batch ingestion through the full pipeline.
+  - `IngestionPipeline` auto-detects format from file extension and content sniffing.
+
+- **Vision & Cross-Modal Memory** (`cerebro.storage.vision_embeddings`). Secondary vision embedding function using sentence-transformers CLIP. Separate vector space merged at recall time.
+  - `VisionEmbeddingFunction` + `VisionVectorStore` sidecar.
+  - `recall(include_vision=True)` merges text and vision results with cross-modal boost scoring.
+  - `ImageAdapter` extracts captions (Ollama llava fallback) and optional pytesseract OCR.
+  - `PDFAdapter` extracts text + embedded images, links images as `part_of` the document memory.
+  - `HTMLAdapter` ingests text + image references.
+  - `[vision]` extras in `pyproject.toml`: `pillow`, `pytesseract`, `pymupdf`, `beautifulsoup4`.
+
+- **SQLite FTS5 Full-Text Search** (`cerebro.storage.sqlite_schema`). Keyword fallback when vector search returns empty results.
+  - `memory_nodes_fts` virtual table with auto-maintained triggers.
+  - `recall()` falls back to FTS5 at 0.5 similarity threshold when ChromaDB returns no matches.
+
+- **Soft Delete & Trash Can** (`cerebro.storage.graph_store`, `cerebro.cortex`).
+  - `delete_memory(hard=False)` is the new default — memories go to trash with `deleted_at` timestamp.
+  - `list_deleted()` shows trash contents.
+  - `restore_memory()` pulls from trash back into active search.
+  - `purge_memory()` / `purge_all_deleted(days=N)` for permanent removal.
+  - Partial index on `deleted_at IS NOT NULL` for fast trash queries.
+
+- **Memory Versioning** (`cerebro.storage.graph_store`). Audit trail for memory edits.
+  - `memory_versions` table snapshots content, tags, salience, and visibility before each content update.
+  - `get_memory_versions()` lists history; `get_version()` fetches a specific revision.
+  - `restore_version()` rolls back to any previous revision.
+  - Snapshots triggered only on content change — metadata-only updates skip versioning for efficiency.
+
+- **Tag Management Engine** (`cerebro.engines.tag_manager`).
+  - `list_tags()`, `rename_tag()`, `merge_tags()`, `delete_tag()` — all via client-side JSON manipulation.
+
+- **Bulk Operations** (`cerebro.cortex`).
+  - `bulk_update_visibility()` — change visibility for multiple memories at once.
+  - `bulk_delete()` — soft-delete multiple memories.
+  - `export_memories()` — export to JSON or Markdown.
+
+- **Thread Management** (`cerebro.cortex`).
+  - `list_threads()`, `get_thread_memories()`, `prune_thread()`.
+
+- **16 New MCP Tools** (now 56 total).
+  - Trash: `list_deleted`, `restore_memory`, `purge_memory`, `purge_all_deleted`
+  - Versions: `get_memory_versions`, `restore_version`
+  - Tags: `list_tags`, `rename_tag`, `merge_tags`, `delete_tag`
+  - Bulk: `bulk_delete`, `export_memories`
+  - Threads: `list_threads`, `get_thread_memories`, `prune_thread`
+  - Vision: `describe_image`, `search_vision`
+
+- **Pydantic v2 Compliance**. Replaced all 4 deprecated `json_encoders` with `@field_serializer` in `models/memory.py`, `models/link.py`, `models/episode.py`, `models/agent.py`. Zero deprecation warnings.
+
+### Fixed
+
+- **StorageCoordinator.delete_node() not passing `soft` parameter**. The `soft` flag was silently dropped, causing all deletes to be hard deletes even when soft-delete was requested. Now correctly forwarded to `GraphStore.delete_node()`.
+
+- **Schema migration ordering** (v5→v6). `deleted_at` column and `memory_versions` table added safely via `ALTER TABLE` with defaults for legacy rows.
+
+### Internal
+
+- SQLite schema version bumped from 4 → 6.
+- 61 new unit tests: 16 ingestion adapters, 14 vision/cross-modal, 13 soft-delete + versioning, 18 CRUD/bulk/thread.
+- 447 total tests passing (288 core + 57 migration + 73 interface + 29 new).
+
+[0.4.0]: https://github.com/buckster123/CerebroCortex/releases/tag/v0.4.0
+[0.3.0]: https://github.com/buckster123/CerebroCortex/releases/tag/v0.3.0
 
 ### Added
 

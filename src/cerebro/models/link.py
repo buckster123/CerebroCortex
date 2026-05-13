@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from cerebro.types import LinkType
 
@@ -42,4 +42,6 @@ class AssociativeLink(BaseModel):
         description="Human-readable explanation of why this link exists"
     )
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
+    @field_serializer("created_at", "last_activated")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat() if value else ""

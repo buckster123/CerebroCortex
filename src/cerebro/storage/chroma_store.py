@@ -99,6 +99,7 @@ class ChromaStore(VectorStore):
             "visibility": meta.visibility.value if hasattr(meta.visibility, "value") else str(meta.visibility),
             "layer": meta.layer.value if hasattr(meta.layer, "value") else str(meta.layer),
             "memory_type": meta.memory_type.value if hasattr(meta.memory_type, "value") else str(meta.memory_type),
+            "media_type": meta.media_type.value if hasattr(meta.media_type, "value") else str(meta.media_type),
             "valence": meta.valence.value if hasattr(meta.valence, "value") else str(meta.valence),
             "arousal": meta.arousal,
             "salience": meta.salience,
@@ -109,6 +110,8 @@ class ChromaStore(VectorStore):
             "conversation_thread": meta.conversation_thread or "",
             "source": meta.source,
             "recipient": meta.recipient or "",
+            "source_file": meta.source_file or "",
+            "attachment_count": len(meta.attachments),
             "created_at": node.created_at.isoformat(),
             "access_count": node.strength.access_count,
         }

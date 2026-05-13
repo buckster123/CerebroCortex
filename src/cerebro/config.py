@@ -167,6 +167,9 @@ OPENAI_COMPAT_NO_THINK = True  # Append /no_think to system prompts (disables Co
 OPENAI_COMPAT_EMBEDDING_BASE_URL = ""
 OPENAI_COMPAT_EMBEDDING_MODEL = ""
 
+# Near-duplicate detection threshold (cosine similarity). Set to 1.0 to disable.
+NEAR_DEDUP_THRESHOLD = 0.95
+
 # =============================================================================
 # Server
 # =============================================================================

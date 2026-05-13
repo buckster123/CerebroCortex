@@ -37,7 +37,13 @@ dependencies = [
 mcp = ["mcp>=0.1.0"]
 api = ["fastapi>=0.100.0", "uvicorn>=0.22.0", "websockets>=11.0"]
 llm = ["anthropic>=0.25.0", "openai>=1.0.0"]
-all = ["cerebro-cortex[mcp,api,llm]"]
+vision = [
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+    "pymupdf>=1.23.0",
+    "beautifulsoup4>=4.12.0",
+]
+all = ["cerebro-cortex[mcp,api,llm,vision]"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

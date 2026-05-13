@@ -4,10 +4,13 @@ This is the canonical store for the associative graph, full metadata,
 and strength parameters. ChromaDB handles vectors; SQLite handles everything else.
 """
 
+import logging
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 -- Memory nodes (rich metadata + strength state)
@@ -54,7 +57,14 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
     -- Timestamps
     created_at TEXT NOT NULL,
     last_accessed_at TEXT,
-    promoted_at TEXT
+    promoted_at TEXT,
+
+    -- Multimodal support (Phase B)
+    media_type TEXT NOT NULL DEFAULT 'text',
+    source_file TEXT,
+
+    -- CRUD lifecycle (Phase C)
+    deleted_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_type ON memory_nodes(memory_type);
@@ -66,6 +76,23 @@ CREATE INDEX IF NOT EXISTS idx_nodes_session ON memory_nodes(session_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_salience ON memory_nodes(salience DESC);
 CREATE INDEX IF NOT EXISTS idx_nodes_created ON memory_nodes(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON memory_nodes(content_hash);
+
+-- Attachments (multimodal media linked to memories)
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    media_type TEXT NOT NULL DEFAULT 'unknown',
+    file_path TEXT,
+    original_bytes_hash TEXT,
+    text_description TEXT,
+    vision_embedding_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (memory_id) REFERENCES memory_nodes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_memory ON attachments(memory_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_media_type ON attachments(media_type);
 
 -- Associative links (graph edges)
 CREATE TABLE IF NOT EXISTS associative_links (
@@ -159,6 +186,50 @@ CREATE TABLE IF NOT EXISTS dream_log (
     success INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE INDEX IF NOT EXISTS idx_nodes_source ON memory_nodes(source);
+
+-- Full-text search (FTS5) virtual table for keyword fallback
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_nodes_fts USING fts5(
+    content,
+    content_rowid=rowid,
+    content=memory_nodes
+);
+
+-- Triggers to keep FTS5 in sync with memory_nodes
+CREATE TRIGGER IF NOT EXISTS memory_nodes_fts_insert
+AFTER INSERT ON memory_nodes BEGIN
+    INSERT INTO memory_nodes_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_nodes_fts_update
+AFTER UPDATE OF content ON memory_nodes BEGIN
+    INSERT INTO memory_nodes_fts(memory_nodes_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO memory_nodes_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_nodes_fts_delete
+AFTER DELETE ON memory_nodes BEGIN
+    INSERT INTO memory_nodes_fts(memory_nodes_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+END;
+
+-- Memory versions (audit trail for content changes)
+CREATE TABLE IF NOT EXISTS memory_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    salience REAL NOT NULL,
+    visibility TEXT NOT NULL,
+    edited_by TEXT,
+    edited_at TEXT NOT NULL,
+    change_note TEXT,
+    FOREIGN KEY (memory_id) REFERENCES memory_nodes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_versions_memory ON memory_versions(memory_id);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -179,6 +250,13 @@ def initialize_database(db_path: Path) -> sqlite3.Connection:
 
     # Apply schema
     conn.executescript(SCHEMA_SQL)
+
+    # Check FTS5 availability
+    fts5_available = conn.execute(
+        "SELECT count(*) FROM pragma_compile_options() WHERE compile_options LIKE 'ENABLE_FTS5'"
+    ).fetchone()[0]
+    if not fts5_available:
+        logger.warning("SQLite FTS5 not available; keyword search fallback disabled")
 
     # Record schema version
     existing = conn.execute(
@@ -226,6 +304,44 @@ def initialize_database(db_path: Path) -> sqlite3.Connection:
         conn.execute(
             "INSERT INTO schema_version (version, applied_at, description) "
             "VALUES (4, datetime('now'), 'Add dream checkpointing columns')"
+        )
+    conn.commit()
+
+    # Migration v5: multimodal support (attachments table, media_type + source_file columns)
+    # The attachments table is handled by CREATE TABLE IF NOT EXISTS above.
+    # Existing memory_nodes need the new columns via ALTER TABLE.
+    try:
+        conn.execute("ALTER TABLE memory_nodes ADD COLUMN media_type TEXT NOT NULL DEFAULT 'text'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE memory_nodes ADD COLUMN source_file TEXT")
+    except sqlite3.OperationalError:
+        pass
+    existing_v5 = conn.execute(
+        "SELECT version FROM schema_version WHERE version = 5"
+    ).fetchone()
+    if not existing_v5:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) "
+            "VALUES (5, datetime('now'), 'Add multimodal attachments and media_type')"
+        )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_media_type ON memory_nodes(media_type)")
+    conn.commit()
+
+    # Migration v6: soft-delete support (deleted_at column) + memory_versions table
+    try:
+        conn.execute("ALTER TABLE memory_nodes ADD COLUMN deleted_at TEXT")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_deleted ON memory_nodes(deleted_at) WHERE deleted_at IS NOT NULL")
+    existing_v6 = conn.execute(
+        "SELECT version FROM schema_version WHERE version = 6"
+    ).fetchone()
+    if not existing_v6:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) "
+            "VALUES (6, datetime('now'), 'Add soft-delete and memory versioning')"
         )
     conn.commit()
 

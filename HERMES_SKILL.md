@@ -1,13 +1,14 @@
 ---
 name: cerebrocortex
-description: Use CerebroCortex — a brain-analogous AI memory system with 46 MCP tools. Covers when/how to remember, recall, associate, record episodes, track procedures, manage intentions, run dream consolidation, and communicate across agents. Load this skill whenever you see mcp_cerebro_* tools or need to work with persistent memory.
-version: 1.0.0
+description: Use CerebroCortex — a brain-analogous AI memory system with 62 MCP tools. Covers when/how to remember, recall, associate, record episodes, track procedures, manage intentions, run dream consolidation, communicate across agents, manage tags, handle soft-deleted trash, and search vision content. Load this skill whenever you see mcp_cerebro_* tools or need to work with persistent memory.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [cerebrocortex, memory, mcp, brain, cognitive-architecture, multi-agent]
+    tags: [cerebrocortex, memory, mcp, brain, cognitive-architecture, multi-agent, vision, crud]
     related_skills: [native-mcp, hermes-memory-provider-plugin]
+    minimum_cerebro_version: "0.4.0"
 ---
 
 # CerebroCortex — The Brain That Remembers Like a Brain
@@ -27,14 +28,14 @@ Input → Thalamus (gate/filter) → Temporal Lobe (concepts) → Amygdala (emot
 
 **Key insight:** You don't need to manually trigger brain regions. When you call `remember()`, the full encoding pipeline runs automatically. When you call `recall()`, the ranking pipeline runs. The brain regions are engines under the hood — you work with the high-level tools.
 
-## The 46 Tools at a Glance
+## The 62 Tools at a Glance
 
 ### Tier 1: Daily Drivers (use these 80% of the time)
 
 | Tool | What it does | When to use |
 |------|-------------|-------------|
 | `mcp_cerebro_remember` | Store a memory (full pipeline) | Facts, decisions, discoveries, observations |
-| `mcp_cerebro_recall` | Search by meaning (semantic) | "What do I know about X?" |
+| `mcp_cerebro_recall` | Search by meaning (semantic + optional vision) | "What do I know about X?" |
 | `mcp_cerebro_associate` | Link two memories | When A relates to B (cause, support, context) |
 | `mcp_cerebro_session_save` | Save session summary | End of session — what happened, what's pending |
 | `mcp_cerebro_session_recall` | Load past session notes | Start of session — orient yourself |
@@ -56,7 +57,33 @@ Input → Thalamus (gate/filter) → Temporal Lobe (concepts) → Amygdala (emot
 | `mcp_cerebro_episode_start` | Begin recording a sequence | Multi-step tasks, debugging sessions |
 | `mcp_cerebro_episode_add_step` | Add a step to episode | Each significant event in the sequence |
 | `mcp_cerebro_episode_end` | Finish episode with summary | Task complete, wrap up the narrative |
-| `mcp_cerebro_ingest_file` | Import a file into memory | Load docs, code, notes as searchable memories |
+| `mcp_cerebro_ingest_file` | Import a file into memory | Load docs, code, notes, PDFs, images as searchable memories |
+
+### Tier 2.5: Memory Management (CRUD, trash, versions, tags)
+
+| Tool | What it does | When to use |
+|------|-------------|-------------|
+| `mcp_cerebro_get_memory` | Get full memory details | Need metadata, tags, scores for one memory |
+| `mcp_cerebro_update_memory` | Edit content, tags, salience | Fix or enrich an existing memory |
+| `mcp_cerebro_delete_memory` | Soft-delete (default) or hard-delete | Remove a memory (goes to trash by default) |
+| `mcp_cerebro_restore_memory` | Restore from trash | Oops, didn't mean to delete that |
+| `mcp_cerebro_list_deleted` | View trash contents | Check what's been deleted |
+| `mcp_cerebro_purge_memory` | Permanently erase | GDPR-style permanent deletion |
+| `mcp_cerebro_get_memory_versions` | See edit history | Audit trail for a memory |
+| `mcp_cerebro_restore_version` | Roll back to old version | Revert a bad edit |
+| `mcp_cerebro_list_tags` | List all tags in use | Tag inventory |
+| `mcp_cerebro_rename_tag` | Rename a tag everywhere | Fix a typo or consolidate naming |
+| `mcp_cerebro_merge_tags` | Combine two tags | Deduplicate tag variants |
+| `mcp_cerebro_delete_tag` | Remove a tag from all memories | Clean up obsolete tags |
+| `mcp_cerebro_bulk_delete` | Soft-delete multiple memories | Batch cleanup |
+| `mcp_cerebro_export_memories` | Export to JSON/Markdown | Backup or share knowledge |
+
+### Tier 2.6: Vision & Cross-Modal (v0.4.0+)
+
+| Tool | What it does | When to use |
+|------|-------------|-------------|
+| `mcp_cerebro_describe_image` | Generate text caption for image | "What's in this screenshot?" |
+| `mcp_cerebro_search_vision` | Search by image similarity | "Find images like this one" |
 
 ### Tier 3: Graph Navigation (use for deep exploration)
 
@@ -65,9 +92,6 @@ Input → Thalamus (gate/filter) → Temporal Lobe (concepts) → Amygdala (emot
 | `mcp_cerebro_memory_neighbors` | Get linked memories | "What's connected to this memory?" |
 | `mcp_cerebro_common_neighbors` | Find shared connections | "What links A and B?" |
 | `mcp_cerebro_find_path` | Shortest path between memories | "How are these ideas related?" |
-| `mcp_cerebro_get_memory` | Get full memory details | Need metadata, tags, scores for one memory |
-| `mcp_cerebro_update_memory` | Edit content, tags, salience | Fix or enrich an existing memory |
-| `mcp_cerebro_delete_memory` | Permanently remove | Wrong/duplicate/harmful content |
 | `mcp_cerebro_share_memory` | Change visibility | Make private→shared or vice versa |
 
 ### Tier 4: System & Analytics (use for health/maintenance)
@@ -82,6 +106,9 @@ Input → Thalamus (gate/filter) → Temporal Lobe (concepts) → Amygdala (emot
 | `mcp_cerebro_emotional_summary` | Emotional tone breakdown | Sentiment analysis of memory corpus |
 | `mcp_cerebro_list_agents` | Show registered agents | Multi-agent coordination |
 | `mcp_cerebro_register_agent` | Register new agent | First time an agent joins |
+| `mcp_cerebro_list_threads` | List conversation threads | Thread management |
+| `mcp_cerebro_get_thread_memories` | Get memories in a thread | Scoped retrieval |
+| `mcp_cerebro_prune_thread` | Clean old thread memories | Housekeeping |
 
 ### Aliases (identical to their counterparts)
 
@@ -179,6 +206,16 @@ Returns memories ranked by a **4-signal blend:**
 - 20% FSRS retrievability (spaced-repetition freshness)
 - 15% salience (importance)
 
+### Vision-Aware Recall (v0.4.0+)
+
+When images have been ingested, include them in search:
+
+```
+recall(query="deployment diagram", include_vision=True, top_k=10)
+```
+
+This merges text results with vision-similarity results from CLIP embeddings. Useful when you remember what something *looked like* but not what it was called.
+
 ### Filtered Recall
 
 ```python
@@ -211,7 +248,41 @@ recall(query="migration", context_ids=["mem_abc", "mem_def"])
 
 ---
 
-## How to Build the Associative Network
+## Memory Management: Trash, Versions, and Tags (v0.4.0+)
+
+### Soft Delete
+
+By default, `delete_memory()` sends memories to trash (soft-delete). They can be restored:
+
+```
+delete_memory(memory_id="mem_abc")        # Soft-delete — goes to trash
+restore_memory(memory_id="mem_abc")        # Pull it back
+list_deleted()                             # See what's in trash
+purge_memory(memory_id="mem_abc")          # Permanently erase
+purge_all_deleted(days=30)                 # Empty trash older than 30 days
+```
+
+For permanent deletion immediately: `delete_memory(memory_id="mem_abc", hard=True)`
+
+### Memory Versions
+
+Every content update creates a snapshot:
+
+```
+get_memory_versions(memory_id="mem_abc")   # List edit history
+restore_version(memory_id="mem_abc", version=3)  # Roll back to version 3
+```
+
+Metadata-only updates (tags, salience, visibility) do NOT create versions.
+
+### Tag Management
+
+```
+list_tags()                           # All tags in use
+rename_tag(old_tag="py", new_tag="python")  # Rename everywhere
+merge_tags(source_tag="js", target_tag="javascript")  # Combine
+delete_tag(tag="obsolete")            # Remove from all memories
+```
 
 ### Link Types — Choose Precisely
 
