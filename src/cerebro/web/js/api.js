@@ -38,6 +38,7 @@ const API = (() => {
 
     // Ingestion
     uploadFile: (formData) => API.upload('/ingest/upload', formData),
+    checkNearDuplicates: (body) => API.post('/near-duplicates/check', body),
 
     // Trash
     listTrash: () => API.get('/trash'),
@@ -82,6 +83,15 @@ const API = (() => {
     // Watch
     watchStatus: () => API.get('/watch/status'),
     watchToggle: (body) => API.post('/watch/toggle', body),
+
+    // Activation / Decay
+    activationHeatmap: (params = '') => API.get(`/activation/heatmap?${params}`),
+    activationAtRisk: (params = '') => API.get(`/activation/at-risk?${params}`),
+    activationCurve: (id, days = 30) => API.get(`/activation/curve/${id}?days=${days}`),
+
+    // Audit
+    queryAudit: (body) => API.post('/audit/query', body),
+    auditSummary: () => API.get('/audit/summary'),
 
     // Agents
     listAgents: () => API.get('/agents'),

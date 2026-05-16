@@ -326,3 +326,64 @@ def record_access(strength: StrengthState, current_time: Optional[float] = None)
         last_activation=new_base,
         last_computed_at=now,
     )
+
+
+# =============================================================================
+# Activation curve for visualization
+# =============================================================================
+
+
+def compute_activation_curve(
+    strength: StrengthState,
+    days: int = 30,
+) -> list[dict[str, float]]:
+    """Compute the theoretical ACT-R decay curve for a memory over time.
+
+    Returns a list of {day, activation, retrievability} points showing
+    how this memory's activation and recall probability would decay if
+    not accessed again.
+
+    Args:
+        strength: Current strength state.
+        days: Number of days to project forward.
+
+    Returns:
+        List of dicts with day, activation, retrievability keys.
+    """
+    now = time.time()
+    curve = []
+
+    # Current state
+    current_base = base_level_activation(
+        strength.access_timestamps,
+        now,
+        strength.compressed_count,
+        strength.compressed_avg_interval,
+    )
+    current_r = retrievability(0.0, strength.stability)
+    curve.append({
+        "day": 0,
+        "activation": round(current_base, 3),
+        "retrievability": round(current_r, 3),
+    })
+
+    # Project forward: simulate no new accesses
+    for day in range(1, days + 1):
+        future_time = now + day * 86400.0
+        # Activation with the same timestamps but future current_time
+        future_base = base_level_activation(
+            strength.access_timestamps,
+            future_time,
+            strength.compressed_count,
+            strength.compressed_avg_interval,
+        )
+        # Retrievability from last access to future time
+        elapsed_days = day + (now - (strength.access_timestamps[-1] if strength.access_timestamps else now)) / 86400.0
+        future_r = retrievability(elapsed_days, strength.stability)
+        curve.append({
+            "day": day,
+            "activation": round(future_base, 3),
+            "retrievability": round(future_r, 3),
+        })
+
+    return curve

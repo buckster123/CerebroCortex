@@ -42,7 +42,11 @@ const ingestPanel = {
       if (tags) fd.append('tags', tags);
       try {
         const res = await API.uploadFile(fd);
-        progress.innerHTML += `<div style="font-size:12px; color:var(--green); margin-top:4px;">✓ ${file.name} → ${res.memories_created} memories</div>`;
+        let msg = `✓ ${file.name} → ${res.memories_created} created`;
+        if (res.memories_skipped > 0) {
+          msg += `, ${res.memories_skipped} skipped (duplicates/short)`;
+        }
+        progress.innerHTML += `<div style="font-size:12px; color:var(--green); margin-top:4px;">${msg}</div>`;
       } catch (e) {
         progress.innerHTML += `<div style="font-size:12px; color:#ff4444; margin-top:4px;">✗ ${file.name}: ${e.message}</div>`;
       }

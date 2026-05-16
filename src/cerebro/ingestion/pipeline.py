@@ -5,7 +5,14 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from cerebro.config import (
+    DEFAULT_AGENT_ID,
+    SEMANTIC_CHUNKING_ENABLED,
+    SEMANTIC_CHUNK_OVERLAP,
+    SEMANTIC_CHUNK_SIZE,
+)
 from cerebro.ingestion.base import IngestionAdapter, IngestionResult
+from cerebro.ingestion.chunker import SemanticChunker
 from cerebro.ingestion.csv_adapter import CSVAdapter
 from cerebro.ingestion.html_adapter import HTMLAdapter
 from cerebro.ingestion.image_adapter import ImageAdapter
@@ -20,16 +27,32 @@ logger = logging.getLogger(__name__)
 class IngestionPipeline:
     """Routes files to the correct adapter and collects results."""
 
-    def __init__(self, cortex):
+    def __init__(self, cortex, chunker: Optional[SemanticChunker] = None):
         self.cortex = cortex
+        # Build chunker if not provided and semantic chunking is enabled
+        if chunker is None and SEMANTIC_CHUNKING_ENABLED:
+            from cerebro.storage.embeddings import get_embedding_function
+
+            try:
+                embed_fn = get_embedding_function("auto")
+                chunker = SemanticChunker(
+                    max_tokens=SEMANTIC_CHUNK_SIZE,
+                    overlap_tokens=SEMANTIC_CHUNK_OVERLAP,
+                    embedding_func=embed_fn,
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to load embedding function for semantic chunking: {exc}")
+                chunker = None
+
+        self.chunker = chunker
         self.adapters: list[IngestionAdapter] = [
             ImageAdapter(),
             PDFAdapter(),
             HTMLAdapter(),
             CSVAdapter(),
-            MarkdownAdapter(),
+            MarkdownAdapter(chunker=self.chunker),
             JSONAdapter(),
-            TextAdapter(),
+            TextAdapter(chunker=self.chunker),
         ]
 
     def ingest_file(

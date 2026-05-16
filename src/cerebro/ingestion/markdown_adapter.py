@@ -11,6 +11,7 @@ from typing import Optional
 
 from cerebro.config import DEFAULT_AGENT_ID
 from cerebro.ingestion.base import IngestionAdapter, IngestionResult
+from cerebro.ingestion.chunker import SemanticChunker
 from cerebro.types import MemoryType
 
 
@@ -28,6 +29,9 @@ class MarkdownAdapter(IngestionAdapter):
     """Import memories from Markdown files."""
 
     SUPPORTED = {".md", ".markdown", ".mdown", ".mkd"}
+
+    def __init__(self, chunker: Optional[SemanticChunker] = None):
+        self.chunker = chunker
 
     def can_ingest(self, path: Path) -> bool:
         return path.suffix.lower() in self.SUPPORTED
@@ -61,6 +65,8 @@ class MarkdownAdapter(IngestionAdapter):
         session_id: Optional[str] = None,
     ) -> IngestionResult:
         """Import from Markdown text."""
+        from cerebro.ingestion.text_adapter import TextAdapter
+
         report = IngestionResult()
         start = time.time()
 
@@ -72,6 +78,22 @@ class MarkdownAdapter(IngestionAdapter):
         if isinstance(default_tags, str):
             default_tags = [t.strip() for t in default_tags.split(",")]
         default_agent = defaults.get("agent_id", agent_id)
+
+        # If no headings and we have a semantic chunker, use it for better paragraph chunking
+        heading_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+        has_headings = bool(heading_pattern.search(text))
+
+        if not has_headings and self.chunker is not None:
+            # Delegate to TextAdapter with semantic chunking for flat markdown
+            text_adapter = TextAdapter(chunker=self.chunker)
+            return text_adapter.ingest_text(
+                body,
+                cortex=cortex,
+                title=defaults.get("title") or "markdown",
+                tags=list(tags or []) + list(default_tags),
+                agent_id=default_agent,
+                session_id=session_id,
+            )
 
         contents = []
         section_tags = []

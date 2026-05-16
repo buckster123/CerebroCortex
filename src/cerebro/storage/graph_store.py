@@ -900,6 +900,79 @@ class GraphStore:
         }
 
     # =========================================================================
+    # Audit log
+    # =========================================================================
+
+    def append_audit(
+        self,
+        event_type: str,
+        actor_agent_id: Optional[str] = None,
+        target_memory_id: Optional[str] = None,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+        details: Optional[dict] = None,
+    ) -> int:
+        """Append an entry to the audit log.
+
+        Returns the auto-increment row id.
+        """
+        cursor = self.conn.execute(
+            """INSERT INTO audit_log (
+                event_type, actor_agent_id, target_memory_id,
+                old_value, new_value, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                event_type, actor_agent_id, target_memory_id,
+                old_value, new_value, json.dumps(details or {}),
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid or 0
+
+    def query_audit(
+        self,
+        event_type: Optional[str] = None,
+        actor: Optional[str] = None,
+        target: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Query the audit log with optional filters."""
+        conditions = []
+        params: list = []
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if actor:
+            conditions.append("actor_agent_id = ?")
+            params.append(actor)
+        if target:
+            conditions.append("target_memory_id = ?")
+            params.append(target)
+
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        query = f"SELECT * FROM audit_log {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_audit(self, event_type: Optional[str] = None, actor: Optional[str] = None) -> int:
+        """Count audit entries matching filters."""
+        conditions = []
+        params: list = []
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if actor:
+            conditions.append("actor_agent_id = ?")
+            params.append(actor)
+
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        row = self.conn.execute(f"SELECT COUNT(*) as c FROM audit_log {where}", params).fetchone()
+        return row["c"] if row else 0
+
+    # =========================================================================
     # Row mapping helpers
     # =========================================================================
 

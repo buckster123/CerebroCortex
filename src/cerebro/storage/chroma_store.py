@@ -253,3 +253,55 @@ class ChromaStore(VectorStore):
     def count_all(self) -> dict[str, int]:
         """Count documents across all collections."""
         return {name: self.count(name) for name in ALL_COLLECTIONS}
+
+    # ========================================================================
+    # Raw embedding query
+    # ========================================================================
+
+    def query_by_embedding(
+        self,
+        collection: str,
+        embedding: list[float],
+        n_results: int = 10,
+        where: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """Search a collection with a pre-computed embedding vector.
+
+        This is useful for near-duplicate detection where the embedding
+        has already been computed (avoiding redundant embedder calls).
+
+        Args:
+            collection: Collection name to search.
+            embedding: Pre-computed embedding vector.
+            n_results: Max results to return.
+            where: Optional ChromaDB metadata filter.
+
+        Returns:
+            List of result dicts with similarity scores.
+        """
+        coll = self._get_collection(collection)
+        kwargs: dict[str, Any] = {
+            "query_embeddings": [embedding],
+            "n_results": min(n_results, coll.count()) if coll.count() > 0 else 1,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            kwargs["where"] = where
+
+        try:
+            results = coll.query(**kwargs)
+        except Exception as e:
+            logger.error(f"ChromaDB embedding query failed: {e}")
+            return []
+
+        records = []
+        if results["ids"] and results["ids"][0]:
+            for i, doc_id in enumerate(results["ids"][0]):
+                content = results["documents"][0][i] if results["documents"] else ""
+                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+                distance = results["distances"][0][i] if results["distances"] else 1.0
+                records.append(self.result_to_dict(
+                    doc_id, content, metadata, distance, collection
+                ))
+
+        return records

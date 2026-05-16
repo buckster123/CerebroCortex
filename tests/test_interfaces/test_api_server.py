@@ -710,3 +710,68 @@ class TestAgentFiltering:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] in ("idle", "running")
+
+
+class TestNearDuplicateAPI:
+    """Test the /near-duplicates/check REST endpoint."""
+
+    def test_check_near_duplicates_endpoint(self, client):
+        content = "REST API testing for near-duplicate detection"
+        r1 = client.post("/remember", json={"content": content})
+        assert r1.status_code == 200
+        node_id = r1.json()["id"]
+
+        response = client.post("/near-duplicates/check", json={
+            "content": content,
+            "threshold": 0.95,
+            "top_k": 5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["matches_found"] >= 1
+        assert any(m["id"] == node_id for m in data["matches"])
+
+    def test_check_no_duplicates(self, client):
+        response = client.post("/near-duplicates/check", json={
+            "content": "Completely unique string xyz123abc456",
+            "threshold": 0.95,
+            "top_k": 5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["matches_found"] == 0
+        assert data["matches"] == []
+
+    def test_check_with_threshold(self, client):
+        content = "Threshold testing for duplicate detection endpoint"
+        client.post("/remember", json={"content": content})
+
+        # High threshold should still find exact match
+        response = client.post("/near-duplicates/check", json={
+            "content": content,
+            "threshold": 0.99,
+            "top_k": 5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        # Exact match should be found even at 0.99
+        assert data["matches_found"] >= 1
+
+    def test_upload_returns_skipped_count(self, client, tmp_path):
+        # Create a temp text file
+        f = tmp_path / "test.txt"
+        f.write_text("This is a test file for upload skip counting")
+
+        r = client.post("/ingest/upload", files={"file": ("test.txt", f.read_bytes(), "text/plain")})
+        assert r.status_code == 200
+        data = r.json()
+        assert "memories_created" in data
+        assert "memories_skipped" in data
+        assert data["memories_created"] >= 1
+
+        # Upload same file again
+        r2 = client.post("/ingest/upload", files={"file": ("test.txt", f.read_bytes(), "text/plain")})
+        assert r2.status_code == 200
+        data2 = r2.json()
+        # Second upload should have skipped duplicates
+        assert data2["memories_skipped"] >= 1

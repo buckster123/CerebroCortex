@@ -1299,6 +1299,164 @@ async def emotional_summary():
 
 
 # =============================================================================
+# Activation & Decay (ACT-R + FSRS visualization)
+# =============================================================================
+
+@app.get("/activation/heatmap")
+async def activation_heatmap(
+    limit: int = Query(200, ge=1, le=1000),
+    agent_id: Optional[str] = None,
+):
+    """Get activation data for all memories, suitable for scatter-plot visualization.
+
+    Returns {memory_id, age_hours, activation, retrievability, layer, salience}[]
+    """
+    import math
+    from cerebro.activation.strength import base_level_activation, retrievability
+
+    ctx = get_cortex()
+    query = "SELECT id FROM memory_nodes WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?"
+    rows = ctx._graph.conn.execute(query, (limit,)).fetchall()
+
+    now = time.time()
+    points = []
+    for row in rows:
+        node = ctx._graph.get_node(row["id"])
+        if not node:
+            continue
+        if not ctx._can_access(node, agent_id):
+            continue
+
+        strength = node.strength
+        last_access = strength.access_timestamps[-1] if strength.access_timestamps else (
+            node.created_at.timestamp() if hasattr(node.created_at, 'timestamp') else now
+        )
+        age_hours = (now - last_access) / 3600.0
+
+        activation = base_level_activation(
+            strength.access_timestamps, now,
+            strength.compressed_count, strength.compressed_avg_interval,
+        )
+        if math.isinf(activation):
+            activation = -10.0
+
+        r = retrievability(age_hours / 24.0, strength.stability)
+
+        points.append({
+            "id": node.id,
+            "age_hours": round(age_hours, 1),
+            "activation": round(activation, 3),
+            "retrievability": round(r, 3),
+            "layer": node.metadata.layer.value,
+            "salience": node.metadata.salience,
+            "access_count": strength.access_count,
+        })
+
+    return {"count": len(points), "points": points}
+
+
+@app.get("/activation/at-risk")
+async def activation_at_risk(
+    hours: int = Query(24, ge=1, le=720),
+    layer: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Get memories that are fading (low activation / low retrievability / old).
+
+    Args:
+        hours: Hours since last access to be considered "at risk"
+        layer: Filter by layer (sensory, working, long_term)
+        agent_id: Filter by agent visibility
+        limit: Max results
+    """
+    ctx = get_cortex()
+    at_risk = ctx.get_at_risk_memories(
+        hours=hours, layer=layer, agent_id=agent_id, limit=limit,
+    )
+    return {
+        "count": len(at_risk),
+        "threshold_hours": hours,
+        "memories": [
+            {
+                "id": node.id,
+                "content_preview": node.content[:200],
+                "activation": round(activation, 3),
+                "retrievability": round(r, 3),
+                "hours_since_access": round(hours_since, 1),
+                "layer": node.metadata.layer.value,
+                "salience": node.metadata.salience,
+            }
+            for node, activation, r, hours_since in at_risk
+        ],
+    }
+
+
+@app.get("/activation/curve/{memory_id}")
+async def activation_curve(memory_id: str, days: int = Query(30, ge=1, le=90)):
+    """Get the projected ACT-R decay curve for a specific memory."""
+    from cerebro.activation.strength import compute_activation_curve
+
+    ctx = get_cortex()
+    node = ctx.get_memory(memory_id)
+    if not node:
+        raise HTTPException(404, f"Memory not found: {memory_id}")
+
+    curve = compute_activation_curve(node.strength, days=days)
+    return {
+        "memory_id": memory_id,
+        "days": days,
+        "curve": curve,
+    }
+
+
+# =============================================================================
+# Audit logging
+# =============================================================================
+
+class AuditQueryRequest(BaseModel):
+    event_type: Optional[str] = None
+    actor: Optional[str] = None
+    target: Optional[str] = None
+    limit: int = Field(50, ge=1, le=200)
+    offset: int = Field(0, ge=0)
+
+
+@app.post("/audit/query")
+async def query_audit(req: AuditQueryRequest):
+    """Query the audit log with optional filters."""
+    ctx = get_cortex()
+    entries = ctx._graph.query_audit(
+        event_type=req.event_type,
+        actor=req.actor,
+        target=req.target,
+        limit=req.limit,
+        offset=req.offset,
+    )
+    total = ctx._graph.count_audit(event_type=req.event_type, actor=req.actor)
+    return {
+        "count": len(entries),
+        "total": total,
+        "offset": req.offset,
+        "limit": req.limit,
+        "entries": entries,
+    }
+
+
+@app.get("/audit/summary")
+async def audit_summary():
+    """Get a summary of audit events by type."""
+    ctx = get_cortex()
+    rows = ctx._graph.conn.execute(
+        "SELECT event_type, COUNT(*) as c FROM audit_log GROUP BY event_type ORDER BY c DESC"
+    ).fetchall()
+    return {
+        "total_events": sum(r["c"] for r in rows),
+        "by_type": [{"event_type": r["event_type"], "count": r["c"]} for r in rows],
+    }
+
+
+# =============================================================================
 # Memory CRUD (get / delete / update)
 # NOTE: Placed after /memory/health to avoid path parameter collision
 # =============================================================================
@@ -1541,6 +1699,7 @@ async def ingest_upload(
     file: UploadFile = File(...),
     tags: Optional[str] = None,
     agent_id: Optional[str] = None,
+    dedup: bool = True,
 ):
     """Upload and ingest a single file.
 
@@ -1548,6 +1707,7 @@ async def ingest_upload(
         file: The file to upload.
         tags: Comma-separated tags (e.g. "project,research").
         agent_id: Agent ID for attribution.
+        dedup: If False, bypass near-duplicate detection (default True).
     """
     import tempfile
 
@@ -1570,7 +1730,8 @@ async def ingest_upload(
         _emit_stats_refresh()
         return {
             "file": file.filename,
-            "memories_created": report.memories_created,
+            "memories_created": report.memories_imported,
+            "memories_skipped": report.memories_skipped,
             "duration_seconds": round(report.duration_seconds, 3),
         }
     finally:
@@ -1578,6 +1739,46 @@ async def ingest_upload(
             tmp_path.unlink()
         except OSError:
             pass
+
+
+# =============================================================================
+# Near-duplicate detection
+# =============================================================================
+
+class NearDuplicateCheckRequest(BaseModel):
+    content: str = Field(..., min_length=1, description="Content to check for near-duplicates")
+    threshold: float = Field(0.95, ge=0.0, le=1.0)
+    agent_id: Optional[str] = None
+    top_k: int = Field(5, ge=1, le=20)
+
+
+@app.post("/near-duplicates/check")
+async def check_near_duplicates(req: NearDuplicateCheckRequest):
+    """Check if content would be a near-duplicate of existing memories.
+
+    Returns existing memories with similarity scores above the threshold.
+    This is useful for client-side deduplication previews before ingestion.
+    """
+    ctx = get_cortex()
+    matches = ctx.find_near_duplicates(
+        content=req.content,
+        threshold=req.threshold,
+        agent_id=req.agent_id,
+        top_k=req.top_k,
+    )
+    return {
+        "threshold": req.threshold,
+        "matches_found": len(matches),
+        "matches": [
+            {
+                "id": m["id"],
+                "similarity": m.get("similarity"),
+                "content_preview": m.get("content", "")[:200],
+                "collection": m.get("collection"),
+            }
+            for m in matches
+        ],
+    }
 
 
 # =============================================================================

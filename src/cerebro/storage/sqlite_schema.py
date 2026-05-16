@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 -- Memory nodes (rich metadata + strength state)
@@ -236,6 +236,23 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL,
     description TEXT
 );
+
+-- Audit log (security/ops trail)
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    event_type TEXT NOT NULL,
+    actor_agent_id TEXT,
+    target_memory_id TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    details_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_agent_id);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_memory_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
 """
 
 
@@ -342,6 +359,33 @@ def initialize_database(db_path: Path) -> sqlite3.Connection:
         conn.execute(
             "INSERT INTO schema_version (version, applied_at, description) "
             "VALUES (6, datetime('now'), 'Add soft-delete and memory versioning')"
+        )
+    conn.commit()
+
+    # Migration v7: audit log table for security/ops trail
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+        event_type TEXT NOT NULL,
+        actor_agent_id TEXT,
+        target_memory_id TEXT,
+        old_value TEXT,
+        new_value TEXT,
+        details_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_log(event_type);
+    CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_agent_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_memory_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+    """)
+    existing_v7 = conn.execute(
+        "SELECT version FROM schema_version WHERE version = 7"
+    ).fetchone()
+    if not existing_v7:
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) "
+            "VALUES (7, datetime('now'), 'Add audit_log table for security/ops trail')"
         )
     conn.commit()
 

@@ -178,6 +178,15 @@ OPENAI_COMPAT_EMBEDDING_MODEL = ""
 
 # Near-duplicate detection threshold (cosine similarity). Set to 1.0 to disable.
 NEAR_DEDUP_THRESHOLD = 0.95
+DEDUP_AT_INGESTION = True
+
+# Semantic chunking for long documents
+SEMANTIC_CHUNKING_ENABLED = True
+SEMANTIC_CHUNK_SIZE = 512
+SEMANTIC_CHUNK_OVERLAP = 50
+
+# Audit logging for security/ops trail
+AUDIT_LOGGING_ENABLED = True
 
 # =============================================================================
 # File Watcher (auto-ingestion)

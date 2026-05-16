@@ -33,6 +33,7 @@ from cerebro.config import (
     COLLECTION_SESSIONS,
     DATA_DIR,
     DEFAULT_AGENT_ID,
+    NEAR_DEDUP_THRESHOLD,
     SQLITE_DB,
 )
 from cerebro.engines.amygdala import AffectEngine
@@ -694,6 +695,158 @@ class CerebroCortex:
 
         return results
 
+    def find_near_duplicates(
+        self,
+        content: str,
+        threshold: float = NEAR_DEDUP_THRESHOLD,
+        agent_id: Optional[str] = None,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search for existing memories that are semantically very similar to *content*.
+
+        This is the public API for near-duplicate detection. It embeds the query
+        content once, then queries all ChromaDB collections for matches above
+        the similarity threshold.
+
+        Args:
+            content: Text to check for near-duplicates.
+            threshold: Minimum cosine similarity (0.0-1.0). Higher = stricter.
+            agent_id: If provided, filter results by visibility scope.
+            top_k: Max results per collection.
+
+        Returns:
+            List of result dicts, each with keys: id, content, similarity,
+            collection, metadata. Sorted by similarity descending.
+        """
+        # Compute embedding once
+        ef = self._chroma._get_embedding_fn()
+        embedding = ef([content])[0]
+        embedding_list = embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
+
+        matches: list[dict[str, Any]] = []
+        for coll_name in ALL_COLLECTIONS:
+            try:
+                hits = self._chroma.query_by_embedding(
+                    collection=coll_name,
+                    embedding=embedding_list,
+                    n_results=top_k,
+                )
+                for hit in hits:
+                    sim = hit.get("similarity") or 0.0
+                    if sim >= threshold:
+                        # Visibility filter
+                        if agent_id:
+                            node = self._graph.get_node(hit["id"])
+                            if node and not self._can_access(node, agent_id):
+                                continue
+                        matches.append(hit)
+            except Exception as exc:
+                logger.debug(f"Near-duplicate search failed for {coll_name}: {exc}")
+
+        # Sort by similarity descending
+        matches.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        return matches
+
+    def get_at_risk_memories(
+        self,
+        hours: int = 24,
+        layer: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[tuple]:
+        """Get memories that haven't been accessed recently and are fading.
+
+        "At risk" = memories in sensory/working layers with low activation
+        or low retrievability that haven't been accessed in >N hours.
+
+        Args:
+            hours: Hours since last access to be considered "at risk"
+            layer: Filter by layer name (sensory, working, long_term)
+            agent_id: Filter by agent visibility
+            limit: Max results
+
+        Returns:
+            List of (MemoryNode, activation, retrievability, hours_since_access) tuples.
+        """
+        from cerebro.activation.strength import base_level_activation, retrievability
+        from cerebro.types import MemoryLayer
+
+        cutoff = time.time() - (hours * 3600)
+
+        # Query for memories not accessed since cutoff
+        # SQLite stores strength as JSON; we query all and filter in Python
+        query = "SELECT id FROM memory_nodes WHERE deleted_at IS NULL"
+        params: list = []
+
+        if layer:
+            query += " AND layer = ?"
+            params.append(layer)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit * 3)  # over-fetch for filtering
+
+        rows = self._graph.conn.execute(query, params).fetchall()
+
+        results: list[tuple] = []
+        for row in rows:
+            node = self._graph.get_node(row["id"])
+            if not node:
+                continue
+            if not self._can_access(node, agent_id):
+                continue
+
+            # Only consider sensory/working memories as "at risk"
+            if node.metadata.layer not in (MemoryLayer.SENSORY, MemoryLayer.WORKING):
+                continue
+
+            strength = node.strength
+            last_access = strength.access_timestamps[-1] if strength.access_timestamps else node.created_at.timestamp() if hasattr(node.created_at, 'timestamp') else time.time()
+            hours_since = (time.time() - last_access) / 3600.0
+
+            if hours_since < hours:
+                continue
+
+            activation = base_level_activation(
+                strength.access_timestamps,
+                time.time(),
+                strength.compressed_count,
+                strength.compressed_avg_interval,
+            )
+
+            elapsed_days = hours_since / 24.0
+            r = retrievability(elapsed_days, strength.stability)
+
+            results.append((node, activation, r, hours_since))
+
+        # Sort by lowest retrievability first (most at risk)
+        results.sort(key=lambda x: x[2])
+        return results[:limit]
+
+    def _audit(
+        self,
+        event_type: str,
+        actor: Optional[str] = None,
+        target: Optional[str] = None,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+        details: Optional[dict] = None,
+    ) -> None:
+        """Log an audit event if AUDIT_LOGGING_ENABLED is True."""
+        from cerebro.config import AUDIT_LOGGING_ENABLED
+        if not AUDIT_LOGGING_ENABLED:
+            return
+        try:
+            self._graph.append_audit(
+                event_type=event_type,
+                actor_agent_id=actor,
+                target_memory_id=target,
+                old_value=old_value,
+                new_value=new_value,
+                details=details,
+            )
+        except Exception:
+            pass  # Audit logging is best-effort; never block main operations
+
     # =========================================================================
     # CONTRADICTION DETECTION
     # =========================================================================
@@ -736,10 +889,13 @@ class CerebroCortex:
         """Create an explicit associative link between memories."""
         if not self._graph.get_node(source_id) or not self._graph.get_node(target_id):
             return None
-        return self.links.create_link(
+        link_id = self.links.create_link(
             source_id, target_id, link_type,
             weight=weight, source="user", evidence=evidence,
         )
+        self._audit("link_created", target=source_id,
+                   details={"target_id": target_id, "link_type": link_type.value, "weight": weight, "evidence": evidence})
+        return link_id
 
     # =========================================================================
     # GET / DELETE / UPDATE single memory
@@ -760,6 +916,8 @@ class CerebroCortex:
         if not node:
             return None
         if not self._can_access(node, agent_id):
+            self._audit("access_denial", actor=agent_id, target=memory_id,
+                       details={"reason": "visibility", "visibility": node.metadata.visibility.value})
             return None
         return node
 
@@ -781,7 +939,13 @@ class CerebroCortex:
         if not node:
             return False
         if not self._can_access(node, agent_id):
+            self._audit("access_denial", actor=agent_id, target=memory_id,
+                       details={"reason": "delete_denied", "visibility": node.metadata.visibility.value})
             return False
+
+        self._audit("memory_deleted", actor=agent_id, target=memory_id,
+                   old_value=node.metadata.visibility.value,
+                   details={"hard": hard, "content_preview": node.content[:100]})
 
         # Delete via StorageCoordinator (SQLite SOT + ChromaDB index)
         coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
@@ -880,11 +1044,18 @@ class CerebroCortex:
         if not node:
             return None
         if not self._can_access(node, agent_id):
+            self._audit("access_denial", actor=agent_id, target=memory_id,
+                       details={"reason": "update_denied", "visibility": node.metadata.visibility.value})
             return None
+
+        old_vis = node.metadata.visibility.value
+        old_content_hash = self._graph._content_hash(node.content) if content else None
 
         # Snapshot current state before content change
         if content is not None and content != node.content:
             self._graph.save_version(node, edited_by=agent_id)
+            self._audit("content_edited", actor=agent_id, target=memory_id,
+                       old_value=node.content[:100], new_value=content[:100])
 
         # Build metadata updates
         meta_updates = {}
@@ -923,6 +1094,11 @@ class CerebroCortex:
         # Prune cross-agent links when visibility changes to PRIVATE
         if visibility == Visibility.PRIVATE:
             self._prune_cross_agent_links(memory_id, updated.metadata.agent_id)
+
+        # Log visibility change
+        if visibility is not None and visibility.value != old_vis:
+            self._audit("visibility_changed", actor=agent_id, target=memory_id,
+                       old_value=old_vis, new_value=visibility.value)
 
         return updated
 
@@ -1121,11 +1297,16 @@ class CerebroCortex:
             return None
         # Only the owner can change visibility
         if agent_id and node.metadata.agent_id != agent_id:
+            self._audit("access_denial", actor=agent_id, target=memory_id,
+                       details={"reason": "share_denied_not_owner", "owner": node.metadata.agent_id})
             return None
+        old_vis = node.metadata.visibility.value
         updated = self.update_memory(memory_id, visibility=new_visibility)
         # Prune cross-agent links when going PRIVATE
         if updated and new_visibility == Visibility.PRIVATE:
             self._prune_cross_agent_links(memory_id, node.metadata.agent_id)
+        self._audit("visibility_changed", actor=agent_id, target=memory_id,
+                   old_value=old_vis, new_value=new_visibility.value)
         return updated
 
     # =========================================================================

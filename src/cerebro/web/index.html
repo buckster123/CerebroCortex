@@ -42,8 +42,14 @@
   <button class="nav-btn" data-tab="dream" onclick="app.nav('dream')">
     ☽<span class="tooltip">Dream</span>
   </button>
+  <button class="nav-btn" data-tab="decay" onclick="app.nav('decay')">
+    ☠<span class="tooltip">Decay</span>
+  </button>
   <button class="nav-btn" data-tab="health" onclick="app.nav('health')">
     ♨<span class="tooltip">Health</span>
+  </button>
+  <button class="nav-btn" data-tab="audit" onclick="app.nav('audit')">
+    ✶<span class="tooltip">Audit</span>
   </button>
   <div class="nav-spacer"></div>
   <button class="nav-btn" data-tab="settings" onclick="app.nav('settings')">
@@ -125,6 +131,11 @@
     <div class="panel-body" id="dream-body"></div>
   </div>
 
+  <!-- Decay Panel -->
+  <div class="panel" id="panel-decay">
+    <div class="panel-body" id="decay-body"></div>
+  </div>
+
   <!-- Health Panel -->
   <div class="panel" id="panel-health">
     <div class="panel-header"><h2>♨ Vital Signs</h2></div>
@@ -135,6 +146,11 @@
   <div class="panel" id="panel-settings">
     <div class="panel-header"><h2>⚙ Configuration</h2></div>
     <div class="panel-body" id="settings-body"></div>
+  </div>
+
+  <!-- Audit Panel -->
+  <div class="panel" id="panel-audit">
+    <div class="panel-body" id="audit-body"></div>
   </div>
 </main>
 
@@ -151,8 +167,10 @@
 <script src="js/panels/tags.js"></script>
 <script src="js/panels/threads.js"></script>
 <script src="js/panels/dream.js"></script>
+<script src="js/panels/decay.js"></script>
 <script src="js/panels/health.js"></script>
 <script src="js/panels/settings.js"></script>
+<script src="js/panels/audit.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

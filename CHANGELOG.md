@@ -5,6 +5,55 @@ All notable changes to CerebroCortex are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-05-16
+
+### Added
+
+- **Near-duplicate detection public API** (`cerebro.cortex.find_near_duplicates()`). Search all ChromaDB collections for memories with cosine similarity above a threshold to a given content string. Filters by agent visibility scope.
+  - New REST endpoint: `POST /near-duplicates/check` — preview duplicate matches before ingestion.
+  - Upload endpoint now returns `memories_skipped` count, showing duplicates/short chunks skipped.
+  - Dashboard ingest panel shows skip counts inline.
+
+- **Semantic chunking wired into ingestion pipeline** (`cerebro.ingestion.pipeline`). The existing `SemanticChunker` (sentence-aware, embedding-based topic boundary detection) is now automatically instantiated and passed to `TextAdapter` and `MarkdownAdapter` when `SEMANTIC_CHUNKING_ENABLED=True` (default).
+  - `MarkdownAdapter` delegates flat markdown (no headings) to `TextAdapter` with semantic chunking.
+  - Configurable via `SEMANTIC_CHUNK_SIZE=512` and `SEMANTIC_CHUNK_OVERLAP=50`.
+
+- **Temporal decay visualization dashboard panel** (`js/panels/decay.js`). New "☠ Decay" panel showing:
+  - Scatter plot: memories by age vs. ACT-R activation, colored by layer, sized by salience.
+  - "At risk" table: sensory/working memories not accessed in >24h, sorted by lowest FSRS retrievability. Revive button triggers a `recall()` to boost activation.
+  - Theoretical decay curve: ACT-R + FSRS projection over 30 days.
+  - New REST endpoints: `GET /activation/heatmap`, `GET /activation/at-risk`, `GET /activation/curve/{id}`.
+
+- **Audit logging** (`audit_log` table, schema v7). Security/ops trail for multi-agent setups.
+  - Events logged: `access_denial`, `visibility_changed`, `content_edited`, `memory_deleted`, `link_created`.
+  - Hooks in `get_memory()`, `delete_memory()`, `update_memory()`, `share_memory()`, `associate()`.
+  - Best-effort logging: never blocks main operations.
+  - Configurable via `AUDIT_LOGGING_ENABLED=True` (default).
+  - REST endpoints: `POST /audit/query` (filterable), `GET /audit/summary` (event-type breakdown).
+  - Dashboard "✶ Audit" panel with filterable event list and summary counts.
+
+### Internal
+
+- SQLite schema version bumped from 6 → 7 (`audit_log` table + indexes).
+- 25 new tests across dedup, semantic chunking, activation API, and audit hooks.
+- 477 total tests passing (156 ingestion/interfaces +  engines + storage).
+
+## [0.4.1] — 2026-05-16
+
+### Added
+
+- **File watcher daemon** (`cerebro.watch`). Watchdog-based recursive directory monitoring for auto-ingestion.
+  - `cerebro watch <dirs>` CLI command.
+  - API background thread auto-start when `WATCH_ENABLED=True`.
+  - Dashboard watcher toggle in header.
+
+- **Dashboard overhaul** (`src/cerebro/web/`). Alchemical theme, modular JS/CSS, 11 panels.
+  - 20 new REST endpoints: ingest/upload, trash CRUD, versions, tags, threads, bulk ops, export, watch/status, watch/toggle.
+
+### Internal
+
+- 453 total tests passing.
+
 ## [0.4.0] — 2026-05-13
 
 ### Added

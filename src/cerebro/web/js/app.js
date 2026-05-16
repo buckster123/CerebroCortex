@@ -32,7 +32,9 @@ const app = {
       case 'tags': tagsPanel.load(); break;
       case 'threads': threadsPanel.load(); break;
       case 'dream': dreamPanel.load(); break;
+      case 'decay': decayPanel.load(); break;
       case 'health': healthPanel.load(); break;
+      case 'audit': auditPanel.load(); break;
       case 'settings': settingsPanel.load(); break;
     }
   },
