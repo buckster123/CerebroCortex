@@ -42,3 +42,4 @@ raw_data/
 # Screenshots (but allow assets/)
 *.png
 !assets/*.png
+!assets/screenshots/*.png

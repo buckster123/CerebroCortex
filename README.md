@@ -8,11 +8,12 @@
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-447_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="447 Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-453_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="453 Tests"/></a>
   <a href="#brain-regions"><img src="https://img.shields.io/badge/brain_regions-9-ff0055?style=for-the-badge" alt="9 Brain Regions"/></a>
   <a href="#memory-types"><img src="https://img.shields.io/badge/memory_types-6-00d4ff?style=for-the-badge" alt="6 Memory Types"/></a>
   <a href="#dream-engine"><img src="https://img.shields.io/badge/dream_engine-6_phases-9d4edd?style=for-the-badge" alt="Dream Engine"/></a>
   <a href="#interfaces"><img src="https://img.shields.io/badge/mcp_tools-56-ff6b35?style=for-the-badge" alt="56 MCP Tools"/></a>
+  <a href="#dashboard"><img src="https://img.shields.io/badge/dashboard-v0.4.1_alchemical-D4AF37?style=for-the-badge" alt="Dashboard"/></a>
 </p>
 
 <p align="center">
@@ -60,9 +61,10 @@ Real memory is:
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
         MCP["MCP Server<br/><small>56 tools</small>"]
-        API["REST API<br/><small>35+ endpoints</small>"]
+        API["REST API<br/><small>55+ endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
-        DASH["Dashboard<br/><small>Cyberpunk UI</small>"]
+        DASH["Dashboard<br/><small>Alchemical UI</small>"]
+        WATCH["File Watcher<br/><small>Auto-ingest</small>"]
     end
 
     subgraph Cortex["🧠 CerebroCortex Coordinator"]
@@ -102,6 +104,7 @@ graph TB
     API --> Cortex
     CLI --> Cortex
     DASH --> API
+    WATCH --> Cortex
     Cortex --> Engines
     Engines --> Activation
     Engines --> Storage
@@ -811,7 +814,7 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 
 </details>
 
-### REST API (35+ Endpoints)
+### REST API (55+ Endpoints)
 
 Full HTTP API with interactive docs at `/docs`.
 
@@ -838,7 +841,29 @@ Full HTTP API with interactive docs at `/docs`.
 | `PATCH` | `/memory/{id}` | Update memory |
 | `DELETE` | `/memory/{id}` | Delete memory |
 | `POST` | `/memory/{id}/share` | Change visibility (owner only) |
+| `GET` | `/memory/{id}/versions` | Get version history |
+| `POST` | `/memory/{id}/versions/{vid}/restore` | Restore a version |
 | `POST` | `/associate` | Create link |
+| **Ingestion** | | |
+| `POST` | `/ingest/upload` | Upload and ingest a file (multipart) |
+| **Trash** | | |
+| `GET` | `/trash` | List soft-deleted memories |
+| `POST` | `/trash/{id}/restore` | Restore from trash |
+| `DELETE` | `/trash/{id}` | Permanently delete |
+| `POST` | `/trash/purge-all` | Bulk purge old trash |
+| **Tags** | | |
+| `GET` | `/tags` | List all tags |
+| `POST` | `/tags/rename` | Rename a tag |
+| `POST` | `/tags/merge` | Merge tags |
+| `DELETE` | `/tags/{tag}` | Delete a tag |
+| **Threads** | | |
+| `GET` | `/threads` | List conversation threads |
+| `GET` | `/threads/{id}/memories` | Get thread memories |
+| `DELETE` | `/threads/{id}` | Prune (soft-delete) a thread |
+| **Bulk Operations** | | |
+| `POST` | `/bulk/delete` | Soft-delete multiple memories |
+| `POST` | `/bulk/visibility` | Change visibility for multiple |
+| `POST` | `/export` | Export memories to JSON/Markdown |
 | **Episodes** | | |
 | `POST` | `/episodes/start` | Start episode |
 | `POST` | `/episodes/{id}/step` | Add episode step |
@@ -870,6 +895,13 @@ Full HTTP API with interactive docs at `/docs`.
 | `POST` | `/dream/run` | Run Dream Engine (per-agent) |
 | `GET` | `/dream/status` | Dream status |
 | `GET` | `/emotions` | Emotional summary |
+| **File Watcher** | | |
+| `GET` | `/watch/status` | Watcher status |
+| `POST` | `/watch/toggle` | Enable/disable watcher |
+| **Settings** | | |
+| `GET` | `/settings` | Get current settings |
+| `PUT` | `/settings` | Update settings (hot-reload) |
+| `POST` | `/settings/reset` | Reset to defaults |
 
 </details>
 
@@ -897,6 +929,9 @@ cerebro intention list
 cerebro schema list
 cerebro procedure add "Step 1: ..." --tags ops
 
+# Watch directories for auto-ingestion
+cerebro watch ~/Dropbox/CerebroInbox --tags "auto,production"
+
 # System
 cerebro stats
 cerebro health
@@ -920,7 +955,7 @@ CerebroCortex works as a **drop-in memory upgrade** for any AI agent framework t
 
 CerebroCortex is a community memory provider for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Two integration paths:
 
-1. **MCP Server** — Add to `config.yaml`, get 40+ tools instantly (see [Quick Start](#quick-start))
+1. **MCP Server** — Add to `config.yaml`, get 56+ tools instantly (see [Quick Start](#quick-start))
 2. **Memory Provider Plugin** — Deeper integration with prefetch, background sync, and session summaries (see [PR #7913](https://github.com/NousResearch/hermes-agent/pull/7913))
 
 See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** for the complete Hermes integration guide.
@@ -928,7 +963,7 @@ See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** for the complete Hermes integ
 ### Claude Code / OpenClaw / Other Frameworks
 
 1. Point your framework's MCP adapter at `./cerebro-mcp`
-2. All 40 tools are auto-discovered with plain-English descriptions
+2. All 56 tools are auto-discovered with plain-English descriptions
 3. Set `CEREBRO_AGENT_ID` to identify your agent
 
 See **[INTEGRATE.md](INTEGRATE.md)** for detailed setup with Claude Code and OpenClaw:
@@ -968,24 +1003,70 @@ Priority: `config.py` defaults < `data/settings.json` < `data/.env`
 
 ## Dashboard
 
-A **cyberpunk-themed web dashboard** with real-time neural graph visualization.
+A fully redesigned **alchemical-themed web dashboard** with real-time neural graph visualization, drag-drop file ingestion, and complete CRUD for all v0.4+ features.
 
-- **3D mode** (GPU): Three.js force-directed graph with fog, particles, and orbit controls
-- **2D mode** (RPi5/low-GPU): Canvas-based force graph with glow effects
-- Auto-detects WebGL capability and switches modes
+<p align="center">
+  <img src="assets/screenshots/panel-cortex.png" alt="Cortex Panel" width="800"/>
+</p>
+
+**Theme:** Dark void palette with gold (#D4AF37) accents, Cinzel display font, JetBrains Mono body, animated golden particle canvas background with proximity connections. Glassmorphism cards with gradient top borders.
 
 **Panels:**
-- **Cortex** — Live stats, memory type distribution, engine status grid
-- **Graph** — Interactive 3D/2D neural graph with type-colored nodes
-- **Memories** — Search and browse with filtering
-- **Store** — Encode new memories through the UI
-- **Dream** — Run and monitor dream cycles
-- **Health** — System diagnostics
+- **☼ Cortex** — Live stats, memory type distribution, layer breakdown
+- **⚛ Memory Vault** — Semantic search with bulk select, type badges, tag filters
+- **⚡ Ingest** — Drag-and-drop file upload with auto-format detection
+- **☉ Graph** — Interactive 3D/2D force-directed neural graph with type-colored nodes
+- **☠ The Ash Heap** — Trash can with restore and permanent purge
+- **✵ Sigils** — Tag management: rename, merge, delete across all memories
+- **♛ Threads** — Conversation thread browser with memory counts
+- **☽ Oneiros** — Dream Engine control and last-run reports
+- **♨ Vital Signs** — System health diagnostics
+- **⚙ Configuration** — Hot-reload settings, LLM config, watcher toggles
+
+**Real-time features:**
+- WebSocket event stream for live stats refresh
+- Toast notifications for all operations
+- Watcher toggle in header with on/off indicator
 
 ```bash
 ./cerebro-api
 # Open http://localhost:8767/ui
 ```
+
+<p align="center">
+  <img src="assets/screenshots/panel-memories.png" alt="Memories Panel" width="400"/>
+  <img src="assets/screenshots/panel-ingest.png" alt="Ingest Panel" width="400"/>
+</p>
+
+---
+
+## File Watcher
+
+Auto-ingest files dropped into watched directories. Uses `watchdog` (inotify on Linux) with debounced ingestion and fingerprint-based deduplication.
+
+```bash
+# CLI
+cerebro watch ~/Dropbox/CerebroInbox ~/Downloads --tags "auto-ingested"
+
+# Config via settings.json
+{
+  "watch": {
+    "enabled": true,
+    "dirs": ["/home/user/Dropbox/CerebroInbox"],
+    "tags": ["auto-ingested"],
+    "patterns": ["*.md", "*.txt", "*.pdf", "*.png"]
+  }
+}
+```
+
+**Features:**
+- Watches recursively — subdirectories included
+- Fingerprint tracking (mtime+size) prevents re-ingestion across restarts
+- 1-second debounce — waits for file moves to complete
+- Supports all ingestion formats: text, markdown, JSON, PDF, HTML, CSV, images, code
+- State persisted in `~/.cerebro-cortex/.cerebro-watch-state.json`
+- Toggle on/off from dashboard header or `POST /watch/toggle`
+- Auto-starts on API server launch if `WATCH_ENABLED=true`
 
 ---
 
@@ -1234,9 +1315,13 @@ CerebroCortex/
 │   │   ├── dream.py               #   DreamEngine — offline consolidation
 │   │   └── tag_manager.py         #   TagManager — tag CRUD
 │   │
+│   ├── watch/                     # File watcher for auto-ingestion
+│   │   ├── __init__.py            #   FileWatcher export
+│   │   └── watcher.py             #   watchdog-based ingestion handler
+│   │
 │   ├── interfaces/                # External interfaces
 │   │   ├── mcp_server.py          #   MCP server (56 tools)
-│   │   ├── api_server.py          #   FastAPI REST server (35+ endpoints)
+│   │   ├── api_server.py          #   FastAPI REST server (55+ endpoints)
 │   │   └── cli.py                 #   Click CLI
 │   │
 │   ├── migration/                 # Data import tools
@@ -1249,19 +1334,20 @@ CerebroCortex/
 │       └── llm.py                 #   LLM client (Anthropic + Ollama fallback)
 │
 ├── web/
-│   └── index.html                 #   Cyberpunk dashboard (3D/2D graph viz)
+│   └── index.html                 #   Dashboard shell (modular JS/CSS)
 │
-├── tests/                         #   447 tests across 26 test files
+├── tests/                         #   453 tests across 27 test files
 │   ├── conftest.py                #   Shared fixtures (incl. multi_agent_cortex)
 │   ├── test_models/
 │   ├── test_storage/
 │   ├── test_activation/
 │   ├── test_engines/              #   (11 files — engines + scope enforcement)
-│   ├── test_interfaces/
+│   ├── test_interfaces/           #   MCP, API, CLI
 │   ├── test_migration/
-│   ├── test_ingestion/            #   Adapter tests (text, markdown, json, image, pdf, html, csv)
+│   ├── test_ingestion/            #   Adapter tests (7 adapters)
 │   ├── test_vision/               #   Vision embeddings + cross-modal recall
-│   └── test_crud/                 #   Soft-delete, versioning, bulk ops
+│   ├── test_crud/                 #   Soft-delete, versioning, bulk ops
+│   └── test_watch.py              #   File watcher lifecycle + ingestion
 │
 └── data/                          #   Runtime data (gitignored)
     ├── cerebro.db                 #   SQLite graph database
@@ -1273,7 +1359,7 @@ CerebroCortex/
 
 ## Testing
 
-447 tests. Run in groups to avoid file-descriptor exhaustion from ChromaDB client cleanup:
+453 tests. Run in groups to avoid file-descriptor exhaustion from ChromaDB client cleanup:
 
 ```bash
 # Core + engines + storage + activation
@@ -1285,8 +1371,8 @@ PYTHONPATH=src pytest tests/test_migration -q --tb=short
 # Interfaces (MCP, API, CLI)
 PYTHONPATH=src pytest tests/test_interfaces -q --tb=short
 
-# New features (ingestion, vision, CRUD)
-PYTHONPATH=src pytest tests/test_ingestion tests/test_vision tests/test_crud -q --tb=short
+# New features (ingestion, vision, CRUD, watch)
+PYTHONPATH=src pytest tests/test_ingestion tests/test_vision tests/test_crud tests/test_watch -q --tb=short
 ```
 
 ```
@@ -1314,8 +1400,9 @@ tests/test_ingestion/test_adapters.py         ✓  (7 adapters)
 tests/test_vision/test_vision_store.py        ✓  (CLIP embeddings)
 tests/test_vision/test_cross_modal.py         ✓  (cross-modal recall)
 tests/test_crud/test_soft_delete.py           ✓  (soft-delete + versioning)
+tests/test_watch.py                           ✓  (file watcher lifecycle + e2e ingestion)
 tests/test_utils/test_llm.py                  ✓  (LLM client)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 447 passed ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 453 passed ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 ---
@@ -1334,6 +1421,8 @@ tests/test_utils/test_llm.py                  ✓  (LLM client)
 | `sentence-transformers` | SBERT embeddings (384-dim) + CLIP vision | ✓ |
 | `python-igraph` | C-speed graph operations | ✓ |
 | `pydantic` | Data validation | ✓ |
+| `python-dateutil` | Date parsing | ✓ |
+| `watchdog` | File system events (auto-ingestion) | ✓ |
 | `click` | CLI framework | ✓ |
 | `fastapi` + `uvicorn` | REST API (optional) | ✗ |
 | `mcp` | Model Context Protocol (optional) | ✗ |
@@ -1376,10 +1465,12 @@ pip install 'cerebro-cortex[all]'           # Everything
 - [x] **v0.4.0 — Soft delete, trash can, memory versioning**
 - [x] **v0.4.0 — Tag management, bulk operations, thread management**
 - [x] **v0.4.0 — Pydantic v2 compliance (@field_serializer)**
+- [x] **v0.4.1 — File watcher bridge for auto-ingesting directories**
+- [x] **v0.4.1 — Alchemical dashboard overhaul (modular, 11 panels, drag-drop ingest)**
+- [x] **v0.4.1 — 20 new REST endpoints (trash, versions, tags, threads, bulk, export, watch)**
+- [x] **v0.4.1 — Watcher toggle in dashboard + API background thread auto-start**
 - [ ] Semantic chunking for long documents
 - [ ] Near-duplicate detection at ingestion time
-- [ ] Web dashboard refresh (real-time stats, memory browser)
-- [ ] File watcher bridge for auto-ingesting agent memory directories
 - [ ] pgvector backend option for multi-node deployments
 - [ ] Temporal decay visualization in dashboard
 - [ ] Audit logging for access denials and visibility changes
