@@ -82,6 +82,7 @@ const API = (() => {
 
     // Watch
     watchStatus: () => API.get('/watch/status'),
+    browse: (path) => API.get('/browse?path=' + encodeURIComponent(path || '')),
     watchToggle: (body) => API.post('/watch/toggle', body),
 
     // Activation / Decay

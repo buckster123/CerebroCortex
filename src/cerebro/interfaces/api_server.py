@@ -2220,6 +2220,48 @@ def _get_watcher():
     return _watcher
 
 
+
+
+@app.get("/browse")
+async def browse_directories(path: Optional[str] = None):
+    """Browse directories for folder picker. Scoped to home directory for safety.
+
+    Returns: {current: str, parent: str|null, entries: [{name, type, path}]}
+    """
+    home = Path.home().resolve()
+    if path:
+        target = Path(path).expanduser().resolve()
+    else:
+        target = home
+
+    # Safety: prevent escaping home directory
+    try:
+        target.relative_to(home)
+    except ValueError:
+        target = home
+
+    if not target.exists():
+        return {"current": str(target), "parent": None, "entries": [], "error": "Path not found"}
+    if not target.is_dir():
+        target = target.parent
+
+    parent = str(target.parent) if target != home else None
+
+    entries = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+            if entry.name.startswith("."):
+                continue
+            entries.append({
+                "name": entry.name,
+                "type": "directory" if entry.is_dir() else "file",
+                "path": str(entry),
+            })
+    except PermissionError:
+        pass
+
+    return {"current": str(target), "parent": parent, "entries": entries}
+
 @app.get("/watch/status")
 async def watch_status():
     """Get file watcher status."""
@@ -2246,6 +2288,12 @@ async def watch_toggle(req: WatchToggleRequest):
         if not watcher.is_running():
             watcher.start()
         dirs = req.dirs or WATCH_DIRS or []
+        # Auto-create default watch dir if none configured
+        if not dirs:
+            default_dir = DEFAULT_WATCH_DIR
+            default_dir.mkdir(parents=True, exist_ok=True)
+            dirs = [str(default_dir)]
+            apply_settings({"watch": {"dirs": dirs}})
         for d in dirs:
             watcher.add_directory(d)
     else:
