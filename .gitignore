@@ -43,3 +43,6 @@ raw_data/
 *.png
 !assets/*.png
 !assets/screenshots/*.png
+
+# Social media drafts
+x-post-*.md

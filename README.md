@@ -8,17 +8,19 @@
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-453_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="453 Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-467_passing-00ff41?style=for-the-badge&logo=pytest&logoColor=white" alt="467 Tests"/></a>
   <a href="#brain-regions"><img src="https://img.shields.io/badge/brain_regions-9-ff0055?style=for-the-badge" alt="9 Brain Regions"/></a>
   <a href="#memory-types"><img src="https://img.shields.io/badge/memory_types-6-00d4ff?style=for-the-badge" alt="6 Memory Types"/></a>
   <a href="#dream-engine"><img src="https://img.shields.io/badge/dream_engine-6_phases-9d4edd?style=for-the-badge" alt="Dream Engine"/></a>
   <a href="#interfaces"><img src="https://img.shields.io/badge/mcp_tools-56-ff6b35?style=for-the-badge" alt="56 MCP Tools"/></a>
-  <a href="#dashboard"><img src="https://img.shields.io/badge/dashboard-v0.4.1_alchemical-D4AF37?style=for-the-badge" alt="Dashboard"/></a>
+  <a href="#dashboard"><img src="https://img.shields.io/badge/dashboard-v0.5.0_alchemical-D4AF37?style=for-the-badge" alt="Dashboard"/></a>
+  <a href="#cognitive-bootstrap"><img src="https://img.shields.io/badge/CCBS-v0.5.0-9d4edd?style=for-the-badge" alt="CCBS"/></a>
 </p>
 
 <p align="center">
   <a href="#architecture">Architecture</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#cognitive-bootstrap">Cognitive Bootstrap</a> &bull;
   <a href="#brain-regions">Brain Regions</a> &bull;
   <a href="#multi-agent-memory">Multi-Agent</a> &bull;
   <a href="#dream-engine">Dream Engine</a> &bull;
@@ -61,10 +63,11 @@ Real memory is:
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
         MCP["MCP Server<br/><small>56 tools</small>"]
-        API["REST API<br/><small>55+ endpoints</small>"]
+        API["REST API<br/><small>78 endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
         DASH["Dashboard<br/><small>Alchemical UI</small>"]
         WATCH["File Watcher<br/><small>Auto-ingest</small>"]
+        CCBS["CCBS<br/><small>Cognitive Bootstrap</small>"]
     end
 
     subgraph Cortex["🧠 CerebroCortex Coordinator"]
@@ -109,6 +112,7 @@ graph TB
     Engines --> Activation
     Engines --> Storage
     Activation --> Storage
+    CCBS --> Cortex
 
     style Interfaces fill:#1a1a2e,stroke:#00ff41,color:#00ff41
     style Cortex fill:#1a1a2e,stroke:#00d4ff,color:#00d4ff
@@ -223,6 +227,121 @@ brain.associate(node.id, other_id, LinkType.CAUSAL, weight=0.9)
 
 brain.close()
 ```
+
+---
+
+## Cognitive Bootstrap System (CCBS)
+
+> **Your AI's operating system for memory.**
+
+CerebroCortex v0.5.0 introduces the **Cerebro Cognitive Bootstrap System** — dynamic, query-aware cognitive priming that teaches any connected AI agent how to use its own brain effectively.
+
+Instead of burning context on static system prompts, CCBS loads only the cognitive modules the current session needs. It's a living, recallable, token-budgeted cognitive architecture stored inside Cerebro itself.
+
+### How It Works
+
+```mermaid
+graph LR
+    QUERY["User Query"] --> ANALYZE["Query Analysis"]
+    ANALYZE --> TRIGGERS["Manual Triggers?"]
+    ANALYZE --> KEYWORDS["Keyword Detection"]
+    TRIGGERS --> ASSEMBLE["Assemble Block"]
+    KEYWORDS --> ASSEMBLE
+    ASSEMBLE --> BUDGET["Token Budget"]
+    BUDGET --> PROMPT["Cognitive Prompt Block"]
+    
+    style QUERY fill:#1a1a2e,stroke:#00ff41,color:#00ff41
+    style ANALYZE fill:#1a1a2e,stroke:#00d4ff,color:#00d4ff
+    style ASSEMBLE fill:#1a1a2e,stroke:#ffd700,color:#ffd700
+    style PROMPT fill:#1a1a2e,stroke:#ff0055,color:#ff0055
+```
+
+### 12 Modular Cognitive Modules
+
+| Module | Type | Loaded | Purpose |
+|--------|------|--------|---------|
+| **soul** | manifest | always | Master bootstrap — loading protocol, triggers, budget tiers |
+| **module-core** | identity | always | Base reasoning style, communication patterns |
+| **module-cerebro-index** | navigation | always | Table of contents for all cerebro operations |
+| **module-cerebro-ops** | operations | always | remember/recall/associate/search patterns |
+| **module-cerebro-session** | tracking | always | Checkpoint protocol, episode tracking |
+| **module-cerebro-meta** | strategy | always | 90/10 rule, auto-remember triggers |
+| **module-cerebro-intentions** | prospective | auto | TODOs, reminders, deferred tasks |
+| **module-cerebro-agents** | multi-agent | auto | Cross-agent messaging, shared memory |
+| **module-technical** | engineering | auto | Code, systems, architecture reasoning |
+| **module-analysis** | evaluation | auto | Debugging, measurement, trade-offs |
+| **module-creative** | design | auto | Ideation, lateral thinking, aesthetics |
+| **module-research** | synthesis | auto | Literature review, evidence evaluation |
+| **module-communicate** | explanation | auto | Teaching, documenting, presenting |
+
+### Token Budget Tiers
+
+| Mode | Est. Tokens | Use Case |
+|------|-------------|----------|
+| **Minimal** | ~900 | soul + core only — quick queries |
+| **Standard** | ~1,600 | Mandatory + 1-2 detected — normal sessions |
+| **Full** | ~4,200 | All modules — deep work, complex tasks |
+
+### Manual Triggers
+
+Override auto-detection by saying:
+
+| Trigger | Action |
+|---------|--------|
+| "Full load" / "Max brain" / "All in" | Load ALL modules |
+| "Solo core" / "Minimal" | Load only soul + core |
+| "Debug mode" | core + cerebro + technical + analysis |
+| "Creative mode" | core + cerebro + creative |
+| "Research mode" | core + cerebro + research + analysis |
+| "Cerebro mode" | core + all cerebro sub-modules |
+| "Teach me" / "Explain" | core + cerebro + communicate |
+
+### Using CCBS
+
+**Via REST API:**
+```bash
+curl -X POST http://localhost:8767/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Debug why the API is failing"}'
+```
+
+**Via MCP tools:**
+```
+mcp_cerebro_recall(query="CCBS bootstrap soul module", top_k=3)
+mcp_cerebro_recall(query="CCBS module core", top_k=2)
+mcp_cerebro_recall(query="CCBS module technical", top_k=1)
+```
+
+**Via Python:**
+```python
+from cerebro.cortex import CerebroCortex
+from cerebro.interfaces.api_server import CognitiveBootstrapAssembler
+
+brain = CerebroCortex()
+assembler = CognitiveBootstrapAssembler(brain)
+
+block = assembler.assemble(
+    query="Design a new dashboard layout",
+    mode="standard",
+    max_tokens=2000
+)
+print(block["modules_loaded"])  # ['soul', 'module-core', ...]
+print(block["total_tokens"])    # 1650
+```
+
+### The 90/10 Rule
+
+CCBS enforces a memory ops discipline: **Cerebro first, harness memory second.**
+
+| Data Type | Destination | Why |
+|-----------|-------------|-----|
+| Session summaries, discoveries | Cerebro `remember()` | Grows, needs recall |
+| TODOs, intentions | Cerebro `store_intention()` | Participates in recall |
+| Project ecosystem map | Cerebro `remember()` | Changes over time |
+| Host OS, hardware facts | Harness memory | Static, never changes |
+| User communication prefs | Harness memory | Stable conventions |
+
+Harness memory has a ~2.2K char limit. Cerebro has no such limit.
 
 ---
 
@@ -814,7 +933,7 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 
 </details>
 
-### REST API (55+ Endpoints)
+### REST API (78 Endpoints)
 
 Full HTTP API with interactive docs at `/docs`.
 
@@ -846,6 +965,8 @@ Full HTTP API with interactive docs at `/docs`.
 | `POST` | `/associate` | Create link |
 | **Ingestion** | | |
 | `POST` | `/ingest/upload` | Upload and ingest a file (multipart) |
+| **Cognitive Bootstrap** | | |
+| `POST` | `/bootstrap` | Assemble cognitive prompt block from CCBS modules |
 | **Trash** | | |
 | `GET` | `/trash` | List soft-deleted memories |
 | `POST` | `/trash/{id}/restore` | Restore from trash |
@@ -1264,9 +1385,12 @@ CerebroCortex/
 │── INTEGRATE.md                   # Agent framework integration guide
 │── pyproject.toml                 # Package config & dependencies
 │
-├── src/cerebro/
+│── src/cerebro/
 │   │
-│   ├── types.py                   # Core enums (6 memory types, 9 link types, 4 layers, MediaType)
+│   ─── bootstrap/                    # CCBS cognitive modules
+│   │   ─── modules/                  #   12 markdown module sources
+│   │
+│   ─── types.py                   # Core enums (6 memory types, 9 link types, 4 layers, MediaType)
 │   ├── config.py                  # All tuneable parameters
 │   ├── settings.py                # Runtime settings (hot-reload from settings.json/.env)
 │   ├── cortex.py                  # Main coordinator — the brain itself
@@ -1359,7 +1483,7 @@ CerebroCortex/
 
 ## Testing
 
-453 tests. Run in groups to avoid file-descriptor exhaustion from ChromaDB client cleanup:
+467 tests. Run in groups to avoid file-descriptor exhaustion from ChromaDB client cleanup:
 
 ```bash
 # Core + engines + storage + activation
@@ -1401,8 +1525,9 @@ tests/test_vision/test_vision_store.py        ✓  (CLIP embeddings)
 tests/test_vision/test_cross_modal.py         ✓  (cross-modal recall)
 tests/test_crud/test_soft_delete.py           ✓  (soft-delete + versioning)
 tests/test_watch.py                           ✓  (file watcher lifecycle + e2e ingestion)
+tests/test_bootstrap/test_ccbs.py             ✓  (cognitive bootstrap assembler)
 tests/test_utils/test_llm.py                  ✓  (LLM client)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 453 passed ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 467 passed ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 ---
@@ -1469,11 +1594,18 @@ pip install 'cerebro-cortex[all]'           # Everything
 - [x] **v0.4.1 — Alchemical dashboard overhaul (modular, 11 panels, drag-drop ingest)**
 - [x] **v0.4.1 — 20 new REST endpoints (trash, versions, tags, threads, bulk, export, watch)**
 - [x] **v0.4.1 — Watcher toggle in dashboard + API background thread auto-start**
-- [ ] Semantic chunking for long documents
-- [ ] Near-duplicate detection at ingestion time
+- [x] **v0.4.2 — Semantic chunking for long documents**
+- [x] **v0.4.2 — Near-duplicate detection at ingestion time**
+- [x] **v0.4.2 — Temporal decay visualization dashboard panel**
+- [x] **v0.4.2 — Audit logging for access denials and visibility changes**
+- [x] **v0.5.0 — Cerebro Cognitive Bootstrap System (CCBS) — dynamic cognitive priming**
+- [x] **v0.5.0 — 12 modular cognitive modules with query-aware loading**
+- [x] **v0.5.0 — POST /bootstrap endpoint with token budget enforcement**
+- [x] **v0.5.0 — Harness memory migration to Cerebro (90/10 rule)**
 - [ ] pgvector backend option for multi-node deployments
-- [ ] Temporal decay visualization in dashboard
-- [ ] Audit logging for access denials and visibility changes
+- [ ] Semantic similarity-based query analysis (upgrade from keyword matching)
+- [ ] Dashboard panel for CCBS module management
+- [ ] Auto-remember integration into Hermes session start loop
 
 ---
 
