@@ -870,6 +870,105 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["query"],
         },
     },
+
+    # -----------------------------------------------------------------
+    # Cognitive Bootstrap (CCBS)
+    # -----------------------------------------------------------------
+    "cognitive_bootstrap": {
+        "description": "Assemble a dynamic cognitive prompt block from Cerebro Cognitive Bootstrap System (CCBS) modules. Analyzes your query to load relevant cognitive priming modules (soul manifest, core identity, technical, analysis, creative, etc.) within a token budget.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Your intent or question — drives module auto-selection"},
+                "mode": {"type": "string", "enum": ["minimal", "standard", "full"], "description": "Token budget tier: minimal (~900), standard (~1600), full (~4200). Auto-detected if omitted."},
+                "max_tokens": {"type": "integer", "description": "Hard token ceiling (default: 4000)"},
+                "agent_id": {"type": "string", "description": "Agent ID for module visibility filtering"},
+            },
+            "required": ["query"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Near-duplicate detection
+    # -----------------------------------------------------------------
+    "check_near_duplicates": {
+        "description": "Check if content would be a near-duplicate of existing memories. Returns existing memories with similarity scores above the threshold. Useful for deduplication previews before ingestion.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Content to check for near-duplicates"},
+                "threshold": {"type": "number", "description": "Minimum cosine similarity (0.0-1.0). Higher = stricter. Default: 0.95"},
+                "agent_id": {"type": "string", "description": "Filter by agent visibility"},
+                "top_k": {"type": "integer", "description": "Max results per collection. Default: 5"},
+            },
+            "required": ["content"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Activation & Decay visualization
+    # -----------------------------------------------------------------
+    "activation_heatmap": {
+        "description": "Get activation data for all memories (age, activation, retrievability, layer, salience). Suitable for scatter-plot visualization of memory health.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max memories to analyze. Default: 200"},
+                "agent_id": {"type": "string", "description": "Filter by agent visibility"},
+            },
+            "required": [],
+        },
+    },
+    "activation_at_risk": {
+        "description": "Get memories that are fading — low activation, low retrievability, or not accessed recently. These memories may need review or revival.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {"type": "integer", "description": "Hours since last access to be considered 'at risk'. Default: 24"},
+                "layer": {"type": "string", "enum": ["sensory", "working", "long_term"], "description": "Filter by memory layer"},
+                "agent_id": {"type": "string", "description": "Filter by agent visibility"},
+                "limit": {"type": "integer", "description": "Max results. Default: 50"},
+            },
+            "required": [],
+        },
+    },
+    "activation_curve": {
+        "description": "Get the projected ACT-R decay curve for a specific memory over N days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "Memory ID to analyze"},
+                "days": {"type": "integer", "description": "Days to project. Default: 30"},
+            },
+            "required": ["memory_id"],
+        },
+    },
+
+    # -----------------------------------------------------------------
+    # Audit logging
+    # -----------------------------------------------------------------
+    "query_audit": {
+        "description": "Query the audit log with optional filters (event type, actor, target). Returns timestamped records of memory mutations.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_type": {"type": "string", "description": "Filter by event type (e.g. memory_deleted, content_edited, visibility_changed)"},
+                "actor": {"type": "string", "description": "Filter by agent ID who performed the action"},
+                "target": {"type": "string", "description": "Filter by target memory ID"},
+                "limit": {"type": "integer", "description": "Max entries. Default: 50"},
+                "offset": {"type": "integer", "description": "Pagination offset. Default: 0"},
+            },
+            "required": [],
+        },
+    },
+    "audit_summary": {
+        "description": "Get a summary of audit events grouped by type with counts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 }
 
 
@@ -1098,6 +1197,39 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "prune_thread":
             return await _handle_prune_thread(cortex, arguments)
 
+        # =============================================================
+        # Cognitive Bootstrap (CCBS)
+        # =============================================================
+        elif name == "cognitive_bootstrap":
+            return await _handle_cognitive_bootstrap(cortex, arguments)
+
+        # =============================================================
+        # Near-duplicate detection
+        # =============================================================
+        elif name == "check_near_duplicates":
+            return await _handle_check_near_duplicates(cortex, arguments)
+
+        # =============================================================
+        # Activation & Decay
+        # =============================================================
+        elif name == "activation_heatmap":
+            return await _handle_activation_heatmap(cortex, arguments)
+
+        elif name == "activation_at_risk":
+            return await _handle_activation_at_risk(cortex, arguments)
+
+        elif name == "activation_curve":
+            return await _handle_activation_curve(cortex, arguments)
+
+        # =============================================================
+        # Audit logging
+        # =============================================================
+        elif name == "query_audit":
+            return await _handle_query_audit(cortex, arguments)
+
+        elif name == "audit_summary":
+            return await _handle_audit_summary(cortex, arguments)
+
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -1109,6 +1241,188 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 # =============================================================================
 # Handler implementations
 # =============================================================================
+
+async def _handle_cognitive_bootstrap(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    from cerebro.interfaces.api_server import CognitiveBootstrapAssembler
+
+    assembler = CognitiveBootstrapAssembler(cortex)
+    result = assembler.assemble(
+        query=args["query"],
+        mode=args.get("mode"),
+        agent_id=args.get("agent_id"),
+        max_tokens=args.get("max_tokens", 4000),
+    )
+
+    lines = [
+        f"**Cognitive Bootstrap** — mode: `{result['mode']}` | trigger: `{result.get('trigger') or 'auto'}` | tokens: {result['total_tokens']}/{result['max_tokens']}",
+        f"Modules loaded ({len(result['modules_loaded'])}): {', '.join(result['modules_loaded'])}",
+    ]
+    if result['modules_missing']:
+        lines.append(f"Modules missing: {', '.join(result['modules_missing'])}")
+
+    lines.append(f"\n{result['assembled_block']}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_check_near_duplicates(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    matches = cortex.find_near_duplicates(
+        content=args["content"],
+        threshold=args.get("threshold", 0.95),
+        agent_id=args.get("agent_id"),
+        top_k=args.get("top_k", 5),
+    )
+
+    if not matches:
+        return [TextContent(type="text", text="No near-duplicates found.")]
+
+    lines = [f"**{len(matches)} near-duplicate(s) found:**\n"]
+    for i, m in enumerate(matches, 1):
+        sim = m.get("similarity", 0.0)
+        preview = m.get("content", "")[:120]
+        coll = m.get("collection", "unknown")
+        lines.append(f"{i}. [{m.get('id', '?')}] similarity={sim:.3f} coll={coll} | {preview}...")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_activation_heatmap(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    import math
+    from cerebro.activation.strength import base_level_activation, retrievability
+
+    limit = args.get("limit", 200)
+    agent_id = args.get("agent_id")
+
+    rows = cortex._graph.conn.execute(
+        "SELECT id FROM memory_nodes WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+    now = time.time()
+    points = []
+    for row in rows:
+        node = cortex._graph.get_node(row["id"])
+        if not node:
+            continue
+        if not cortex._can_access(node, agent_id):
+            continue
+
+        strength = node.strength
+        last_access = strength.access_timestamps[-1] if strength.access_timestamps else (
+            node.created_at.timestamp() if hasattr(node.created_at, "timestamp") else now
+        )
+        age_hours = (now - last_access) / 3600.0
+        activation = base_level_activation(
+            strength.access_timestamps, now,
+            strength.compressed_count, strength.compressed_avg_interval,
+        )
+        if math.isinf(activation):
+            activation = -10.0
+        r = retrievability(age_hours / 24.0, strength.stability)
+
+        points.append({
+            "id": node.id,
+            "age_hours": round(age_hours, 1),
+            "activation": round(activation, 3),
+            "retrievability": round(r, 3),
+            "layer": node.metadata.layer.value,
+            "salience": node.metadata.salience,
+            "access_count": strength.access_count,
+        })
+
+    lines = [f"**Activation Heatmap** — {len(points)} memories analyzed\n"]
+    for p in points[:20]:
+        lines.append(
+            f"  [{p['id'][:8]}] age={p['age_hours']:.1f}h act={p['activation']:.2f} "
+            f"ret={p['retrievability']:.2f} layer={p['layer']} salience={p['salience']:.2f}"
+        )
+    if len(points) > 20:
+        lines.append(f"  ... and {len(points) - 20} more")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_activation_at_risk(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    at_risk = cortex.get_at_risk_memories(
+        hours=args.get("hours", 24),
+        layer=args.get("layer"),
+        agent_id=args.get("agent_id"),
+        limit=args.get("limit", 50),
+    )
+
+    if not at_risk:
+        return [TextContent(type="text", text="No at-risk memories found.")]
+
+    lines = [f"**{len(at_risk)} at-risk memory/memories:**\n"]
+    for i, (node, activation, r, hours_since) in enumerate(at_risk, 1):
+        preview = node.content[:120] + "..." if len(node.content) > 120 else node.content
+        lines.append(
+            f"{i}. [{node.id[:8]}] act={activation:.2f} ret={r:.2f} "
+            f"{hours_since:.1f}h since access | {preview}"
+        )
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_activation_curve(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    from cerebro.activation.strength import compute_activation_curve
+
+    node = cortex.get_memory(args["memory_id"])
+    if not node:
+        return [TextContent(type="text", text=f"Memory not found: {args['memory_id']}")]
+
+    days = args.get("days", 30)
+    curve = compute_activation_curve(node.strength, days=days)
+
+    lines = [
+        f"**Activation Curve** for {args['memory_id']} — {days} days projection",
+        f"Current access count: {node.strength.access_count}",
+        f"Stability: {node.strength.stability:.2f}",
+        "",
+    ]
+    for point in curve[:10]:
+        lines.append(f"  Day {point['day']:>3}: activation={point['activation']:.3f}  retrievability={point['retrievability']:.3f}")
+    if len(curve) > 10:
+        lines.append(f"  ... and {len(curve) - 10} more days")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_query_audit(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    entries = cortex._graph.query_audit(
+        event_type=args.get("event_type"),
+        actor=args.get("actor"),
+        target=args.get("target"),
+        limit=args.get("limit", 50),
+        offset=args.get("offset", 0),
+    )
+    total = cortex._graph.count_audit(
+        event_type=args.get("event_type"),
+        actor=args.get("actor"),
+    )
+
+    if not entries:
+        return [TextContent(type="text", text="No audit entries found.")]
+
+    lines = [f"**Audit Log** — {len(entries)} of {total} entries\n"]
+    for e in entries:
+        ts = e.get("timestamp", "unknown")
+        et = e.get("event_type", "unknown")
+        actor = e.get("actor_agent_id") or "system"
+        target = e.get("target_memory_id") or "-"
+        lines.append(f"  [{ts}] {et:20} | actor={actor:12} | target={target}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_audit_summary(cortex: CerebroCortex, args: dict) -> list[TextContent]:
+    rows = cortex._graph.conn.execute(
+        "SELECT event_type, COUNT(*) as c FROM audit_log GROUP BY event_type ORDER BY c DESC"
+    ).fetchall()
+
+    if not rows:
+        return [TextContent(type="text", text="No audit events recorded.")]
+
+    total = sum(r["c"] for r in rows)
+    lines = [f"**Audit Summary** — {total} total events\n"]
+    for r in rows:
+        lines.append(f"  {r['event_type']}: {r['c']}")
+    return [TextContent(type="text", text="\n".join(lines))]
+
 
 async def _handle_remember(cortex: CerebroCortex, args: dict) -> list[TextContent]:
     # Map Neo-Cortex args to CerebroCortex args

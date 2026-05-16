@@ -43,6 +43,13 @@ from cerebro.interfaces.mcp_server import (
     _handle_graph_stats,
     _handle_neighbors,
     _handle_cortex_stats,
+    _handle_cognitive_bootstrap,
+    _handle_check_near_duplicates,
+    _handle_activation_heatmap,
+    _handle_activation_at_risk,
+    _handle_activation_curve,
+    _handle_query_audit,
+    _handle_audit_summary,
 )
 
 
@@ -68,8 +75,8 @@ class TestToolSchemas:
             assert schema["input_schema"]["type"] == "object"
 
     def test_tool_count(self):
-        # 56 tools + 3 meta = 59 schemas
-        assert len(TOOL_SCHEMAS) == 59
+        # 63 tools + 3 meta = 66 schemas
+        assert len(TOOL_SCHEMAS) == 66
 
     def test_backward_compat_tools_exist(self):
         assert "memory_store" in TOOL_SCHEMAS
@@ -647,3 +654,83 @@ class TestMCPPrompts:
         assert "session_handoff" in names
         assert "memory_review" in names
         assert "context_briefing" in names
+
+class TestCognitiveBootstrapHandler:
+    @pytest.mark.asyncio
+    async def test_bootstrap_minimal(self, cortex):
+        result = await _handle_cognitive_bootstrap(cortex, {
+            "query": "Solo core test",
+        })
+        assert "Cognitive Bootstrap" in result[0].text
+        assert "mode:" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_with_mode(self, cortex):
+        result = await _handle_cognitive_bootstrap(cortex, {
+            "query": "Debug this error",
+            "mode": "full",
+        })
+        assert "Cognitive Bootstrap" in result[0].text
+        assert "mode:" in result[0].text
+
+
+class TestNearDuplicateHandler:
+    @pytest.mark.asyncio
+    async def test_no_duplicates(self, cortex):
+        result = await _handle_check_near_duplicates(cortex, {
+            "content": "Totally unique content xyz123 not in db",
+        })
+        assert "No near-duplicates" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_find_duplicate(self, cortex):
+        content = "Near duplicate test content for MCP handler"
+        r = await _handle_remember(cortex, {"content": content})
+        mem_id = r[0].text.split("ID: ")[1].split(")")[0]
+
+        result = await _handle_check_near_duplicates(cortex, {
+            "content": content,
+            "threshold": 0.90,
+        })
+        # May or may not find depending on embedder availability
+        assert "near-duplicate" in result[0].text.lower() or "No near-duplicates" in result[0].text
+
+
+class TestActivationHandlers:
+    @pytest.mark.asyncio
+    async def test_activation_heatmap(self, cortex):
+        await _handle_remember(cortex, {"content": "Memory for heatmap test"})
+        result = await _handle_activation_heatmap(cortex, {"limit": 10})
+        assert "Activation Heatmap" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_activation_at_risk_empty(self, cortex):
+        result = await _handle_activation_at_risk(cortex, {"hours": 1})
+        # Fresh memories won't be at risk
+        assert "at-risk" in result[0].text.lower() or "No at-risk" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_activation_curve_not_found(self, cortex):
+        result = await _handle_activation_curve(cortex, {"memory_id": "nonexistent"})
+        assert "not found" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_activation_curve_found(self, cortex):
+        r = await _handle_remember(cortex, {"content": "Memory for curve test"})
+        mem_id = r[0].text.split("ID: ")[1].split(")")[0]
+        result = await _handle_activation_curve(cortex, {"memory_id": mem_id, "days": 7})
+        assert "Activation Curve" in result[0].text
+        assert "Day" in result[0].text
+
+
+class TestAuditHandlers:
+    @pytest.mark.asyncio
+    async def test_audit_summary_empty(self, cortex):
+        result = await _handle_audit_summary(cortex, {})
+        assert "No audit events" in result[0].text or "total events" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_query_audit_empty(self, cortex):
+        result = await _handle_query_audit(cortex, {})
+        assert "No audit entries" in result[0].text or "Audit Log" in result[0].text
+

@@ -115,7 +115,7 @@ export CEREBRO_DATA_DIR="/path/to/data"  # Data location (default: ~/.cerebro-co
 
 ### Using both MCP + Plugin
 
-You can run both simultaneously. The MCP server gives you the full 40-tool suite for manual exploration, while the plugin handles automatic prefetch/sync in the background. They share the same SQLite database safely (WAL mode + igraph auto-resync).
+You can run both simultaneously. The MCP server gives you the full 63-tool suite for manual exploration, while the plugin handles automatic prefetch/sync in the background. They share the same SQLite database safely (WAL mode + igraph auto-resync).
 
 ---
 

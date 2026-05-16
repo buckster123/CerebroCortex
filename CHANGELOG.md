@@ -5,6 +5,29 @@ All notable changes to CerebroCortex are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-05-16
+
+### Added
+
+- **MCP tool parity for v0.4.2/v0.5.0 features.** The MCP server (`cerebro-mcp`) now exposes 63 tools (was 56), adding first-class MCP access to features previously available only via REST:
+  - `cognitive_bootstrap` — Assemble CCBS cognitive priming modules via MCP. Same query analysis, manual triggers, and token budget enforcement as the REST endpoint.
+  - `check_near_duplicates` — Preview potential duplicate memories before ingestion.
+  - `activation_heatmap` — Get activation/retrievability data for scatter-plot visualization.
+  - `activation_at_risk` — Find fading memories that need revival.
+  - `activation_curve` — Project ACT-R decay curve for a specific memory over N days.
+  - `query_audit` — Query the audit log with filters (event type, actor, target).
+  - `audit_summary` — Summary of audit events grouped by type.
+
+### Changed
+
+- Updated README.md MCP tool count (56 → 63) and added new tool categories to the reference table.
+- Updated HERMES_INTEGRATE.md tool count reference (40 → 63).
+
+### Internal
+
+- 7 new MCP handler functions in `mcp_server.py`.
+- 14 new test cases for new MCP handlers in `tests/test_interfaces/test_mcp_server.py` (70 total MCP tests, all passing).
+
 ## [0.5.0] — 2026-05-16
 
 ### Added

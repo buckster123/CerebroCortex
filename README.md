@@ -62,7 +62,7 @@ Real memory is:
 ```mermaid
 graph TB
     subgraph Interfaces["🔌 Interfaces"]
-        MCP["MCP Server<br/><small>56 tools</small>"]
+        MCP["MCP Server<br/><small>63 tools</small>"]
         API["REST API<br/><small>78 endpoints</small>"]
         CLI["CLI<br/><small>cerebro</small>"]
         DASH["Dashboard<br/><small>Alchemical UI</small>"]
@@ -854,7 +854,7 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 ```
 
 <details>
-<summary><strong>Full MCP Tool List (56 tools)</strong></summary>
+<summary><strong>Full MCP Tool List (63 tools)</strong></summary>
 
 | Tool | Description |
 |---|---|
@@ -920,6 +920,17 @@ The native interface for Hermes Agent, Claude, and any MCP-compatible agent. All
 | `memory_neighbors` | Get memories directly linked to a given memory |
 | `find_path` | Find the shortest chain of links between two memories |
 | `common_neighbors` | Find memories linked to both A and B |
+| **Cognitive Bootstrap (CCBS)** | |
+| `cognitive_bootstrap` | Assemble dynamic cognitive priming modules based on query intent |
+| **Near-Duplicate Detection** | |
+| `check_near_duplicates` | Preview potential duplicates before ingestion |
+| **Activation & Decay** | |
+| `activation_heatmap` | Get activation data for all memories (scatter-plot ready) |
+| `activation_at_risk` | Find fading memories that need revival |
+| `activation_curve` | Project ACT-R decay curve for a specific memory |
+| **Audit Logging** | |
+| `query_audit` | Query the audit log with filters |
+| `audit_summary` | Summary of audit events by type |
 | **System** | |
 | `cortex_stats` | Comprehensive system statistics (raw JSON) |
 | `memory_health` | Memory system health report |
@@ -1084,7 +1095,7 @@ See **[HERMES_INTEGRATE.md](HERMES_INTEGRATE.md)** for the complete Hermes integ
 ### Claude Code / OpenClaw / Other Frameworks
 
 1. Point your framework's MCP adapter at `./cerebro-mcp`
-2. All 56 tools are auto-discovered with plain-English descriptions
+2. All 63 tools are auto-discovered with plain-English descriptions
 3. Set `CEREBRO_AGENT_ID` to identify your agent
 
 See **[INTEGRATE.md](INTEGRATE.md)** for detailed setup with Claude Code and OpenClaw:
@@ -1444,7 +1455,7 @@ CerebroCortex/
 │   │   └── watcher.py             #   watchdog-based ingestion handler
 │   │
 │   ├── interfaces/                # External interfaces
-│   │   ├── mcp_server.py          #   MCP server (56 tools)
+│   │   ├── mcp_server.py          #   MCP server (63 tools)
 │   │   ├── api_server.py          #   FastAPI REST server (55+ endpoints)
 │   │   └── cli.py                 #   Click CLI
 │   │
@@ -1516,7 +1527,7 @@ tests/test_engines/test_neocortex.py          ✓  (schema formation)
 tests/test_engines/test_dream.py              ✓  (dream + per-agent scoping)
 tests/test_engines/test_cortex.py             ✓  (integration tests)
 tests/test_engines/test_scope_enforcement.py  ✓  (multi-agent scope + link pruning)
-tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 56 tools)
+tests/test_interfaces/test_mcp_server.py      ✓  (MCP protocol, 63 tools)
 tests/test_interfaces/test_api_server.py      ✓  (REST API)
 tests/test_interfaces/test_cli.py             ✓  (CLI commands)
 tests/test_migration/test_*.py                ✓  (all importers)
