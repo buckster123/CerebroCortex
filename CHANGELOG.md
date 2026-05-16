@@ -5,6 +5,29 @@ All notable changes to CerebroCortex are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-05-16
+
+### Added
+
+- **Cerebro Cognitive Bootstrap System (CCBS)** — Dynamic, query-aware cognitive priming.
+  - 12 modular cognitive modules stored as Cerebro memories: soul manifest, core identity, 6 cerebro operational sub-modules (index, ops, session, intentions, agents, meta), and 5 optional modules (technical, analysis, creative, research, communicate).
+  - Modules are modular, navigable, and self-referential with associative links between related modules.
+  - `scripts/bootstrap_ccbs.py` — one-time ingestion script that reads module markdown files and ingests them as PROCEDURAL/SEMANTIC memories with `ccbs` tags.
+  - `POST /bootstrap` REST endpoint — assembles a cognitive prompt block based on query analysis, manual trigger detection, keyword auto-detection, and token budget enforcement.
+  - Manual triggers: "Full load", "Solo core", "Debug mode", "Creative mode", "Research mode", "Cerebro mode", "Teach me".
+  - Token budget tiers: Minimal (~900 tokens), Standard (~1,600), Full (~4,200). Auto-downgrades if context is tight.
+  - Hermes skill: `cerebro-cognitive-bootstrap` installed at `~/.hermes/skills/autonomous-ai-agents/cerebro-cognitive-bootstrap/`.
+
+- **Harness memory migration to Cerebro** — Growing project data moved from static harness memory to living Cerebro memories.
+  - Project ecosystem map, integration quick-reference, and session checkpoint protocol now stored as SEMANTIC/PROCEDURAL memories in Cerebro.
+  - Harness memory trimmed to static-only: host facts, user communication prefs, stable conventions.
+  - Enforces the 90/10 rule: 90% of memory ops go to Cerebro, 10% to harness memory.
+
+### Internal
+
+- 14 new unit tests for CCBS bootstrap assembler (`tests/test_bootstrap/test_ccbs.py`).
+- 78 REST endpoints total (was 77).
+
 ## [0.4.2] — 2026-05-16
 
 ### Added

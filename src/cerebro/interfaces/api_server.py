@@ -359,6 +359,238 @@ class WatchToggleRequest(BaseModel):
     dirs: Optional[list[str]] = None
 
 
+class BootstrapRequest(BaseModel):
+    query: str = Field(default="", description="User query for intent analysis")
+    mode: Optional[str] = Field(default=None, description="Override mode: minimal, standard, full, custom")
+    agent_id: Optional[str] = Field(default=None, description="Agent scope for module recall")
+    max_tokens: int = Field(default=4000, description="Maximum token budget for assembled block")
+
+
+# =============================================================================
+# Cognitive Bootstrap Assembler
+# =============================================================================
+
+class CognitiveBootstrapAssembler:
+    """Assembles a cognitive prompt block from CCBS modules based on query analysis."""
+
+    # Token estimates per module (calibrated on actual content)
+    TOKEN_ESTIMATES: dict[str, int] = {
+        "soul": 350,
+        "module-core": 250,
+        "module-cerebro-index": 180,
+        "module-cerebro-ops": 320,
+        "module-cerebro-session": 280,
+        "module-cerebro-intentions": 180,
+        "module-cerebro-agents": 180,
+        "module-cerebro-meta": 240,
+        "module-technical": 320,
+        "module-analysis": 280,
+        "module-creative": 240,
+        "module-research": 240,
+        "module-communicate": 220,
+    }
+
+    MANDATORY_MODULES = [
+        "soul",
+        "module-core",
+        "module-cerebro-index",
+        "module-cerebro-ops",
+        "module-cerebro-session",
+        "module-cerebro-meta",
+    ]
+
+    # Keyword -> module name mapping for auto-detection
+    KEYWORD_MAP: dict[str, list[str]] = {
+        "technical": ["module-technical"],
+        "analysis": ["module-analysis"],
+        "creative": ["module-creative"],
+        "research": ["module-research"],
+        "communicate": ["module-communicate"],
+    }
+
+    # Flat keyword -> module mapping for quick lookup
+    _KEYWORD_TRIGGERS: dict[str, list[str]] = {
+        # Technical
+        "python": ["module-technical"], "javascript": ["module-technical"], "typescript": ["module-technical"],
+        "rust": ["module-technical"], "go": ["module-technical"], "java": ["module-technical"],
+        "code": ["module-technical"], "bug": ["module-technical", "module-analysis"],
+        "fix": ["module-technical", "module-analysis"], "error": ["module-technical", "module-analysis"],
+        "debug": ["module-technical", "module-analysis"], "architecture": ["module-technical"],
+        "api": ["module-technical"], "server": ["module-technical"], "database": ["module-technical"],
+        "docker": ["module-technical"], "git": ["module-technical"], "build": ["module-technical"],
+        "test": ["module-technical"], "pytest": ["module-technical"], "deploy": ["module-technical"],
+        "compile": ["module-technical"], "endpoint": ["module-technical"], "schema": ["module-technical"],
+        # Analysis
+        "why": ["module-analysis"], "evaluate": ["module-analysis"], "compare": ["module-analysis"],
+        "versus": ["module-analysis"], "trade-off": ["module-analysis"], "measure": ["module-analysis"],
+        "benchmark": ["module-analysis"], "profile": ["module-analysis"], "performance": ["module-analysis"],
+        "latency": ["module-analysis"], "throughput": ["module-analysis"], "root cause": ["module-analysis"],
+        "investigate": ["module-analysis"], "diagnose": ["module-analysis"], "reproduce": ["module-analysis"],
+        # Creative
+        "design": ["module-creative"], "create": ["module-creative"], "ideate": ["module-creative"],
+        "brainstorm": ["module-creative"], "concept": ["module-creative"], "theme": ["module-creative"],
+        "palette": ["module-creative"], "layout": ["module-creative"], "logo": ["module-creative"],
+        "brand": ["module-creative"], "ui": ["module-creative"], "ux": ["module-creative"],
+        "visual": ["module-creative"], "animation": ["module-creative"], "style": ["module-creative"],
+        # Research
+        "paper": ["module-research"], "arxiv": ["module-research"], "study": ["module-research"],
+        "research": ["module-research"], "state of": ["module-research"], "survey": ["module-research"],
+        "review": ["module-research"], "literature": ["module-research"], "dataset": ["module-research"],
+        "benchmark results": ["module-research"], "evaluation": ["module-research", "module-analysis"],
+        # Communicate
+        "explain": ["module-communicate"], "teach": ["module-communicate"], "how to": ["module-communicate"],
+        "what is": ["module-communicate"], "document": ["module-communicate"], "write": ["module-communicate"],
+        "describe": ["module-communicate"], "summarize": ["module-communicate"], "brief": ["module-communicate"],
+        "report": ["module-communicate"], "presentation": ["module-communicate"], "diagram": ["module-communicate"],
+        # Intentions
+        "todo": ["module-cerebro-intentions"], "plan": ["module-cerebro-intentions"],
+        "remember to": ["module-cerebro-intentions"], "don't forget": ["module-cerebro-intentions"],
+        "later": ["module-cerebro-intentions"], "next": ["module-cerebro-intentions"],
+        # Agents
+        "agent": ["module-cerebro-agents"], "message": ["module-cerebro-agents"],
+        "hailo": ["module-cerebro-agents"], "apex": ["module-cerebro-agents"],
+        "send to": ["module-cerebro-agents"], "inbox": ["module-cerebro-agents"],
+    }
+
+    # Manual trigger -> modules mapping
+    MANUAL_TRIGGERS: dict[str, list[str]] = {
+        "full load": [],  # special: all modules
+        "max brain": [],
+        "all in": [],
+        "solo core": ["solo"],
+        "minimal": ["solo"],
+        "debug mode": ["module-technical", "module-analysis"],
+        "creative mode": ["module-creative"],
+        "research mode": ["module-research", "module-analysis"],
+        "cerebro mode": ["module-cerebro-intentions", "module-cerebro-agents"],
+        "teach me": ["module-communicate"],
+        "explain": ["module-communicate"],
+    }
+
+    def __init__(self, cortex: CerebroCortex):
+        self.cortex = cortex
+
+    def assemble(
+        self,
+        query: str,
+        mode: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        max_tokens: int = 4000,
+    ) -> dict:
+        """Analyze query and assemble the cognitive block."""
+        query_lower = query.lower()
+
+        # Step 1: Detect manual triggers
+        trigger_modules, detected_trigger = self._detect_triggers(query_lower)
+
+        # Step 2: Auto-detect from keywords (if no manual trigger or mode is standard+)
+        keyword_modules = set()
+        if not detected_trigger or mode in (None, "standard", "full"):
+            keyword_modules = self._detect_keywords(query_lower)
+
+        # Step 3: Determine mode and module set
+        if detected_trigger == "solo":
+            mode = mode or "minimal"
+            module_names = ["soul", "module-core"]
+        elif detected_trigger in ("full load", "max brain", "all in"):
+            mode = "full"
+            module_names = list(self.TOKEN_ESTIMATES.keys())
+        else:
+            mode = mode or "standard"
+            module_names = list(self.MANDATORY_MODULES)
+            if trigger_modules:
+                module_names.extend(trigger_modules)
+            module_names.extend(keyword_modules)
+
+        module_names = list(dict.fromkeys(module_names))  # preserve order, dedup
+
+        # Step 4: Token budget enforcement
+        module_names = self._enforce_budget(module_names, max_tokens, mode)
+
+        # Step 5: Load module contents from Cerebro
+        loaded = []
+        missing = []
+        for name in module_names:
+            content = self._load_module_content(name, agent_id=agent_id)
+            if content:
+                loaded.append({"name": name, "content": content, "tokens": self.TOKEN_ESTIMATES.get(name, 300)})
+            else:
+                missing.append(name)
+
+        total_tokens = sum(m["tokens"] for m in loaded)
+
+        return {
+            "mode": mode,
+            "trigger": detected_trigger,
+            "modules_loaded": [m["name"] for m in loaded],
+            "modules_missing": missing,
+            "total_tokens": total_tokens,
+            "max_tokens": max_tokens,
+            "assembled_block": "\n\n---\n\n".join(m["content"] for m in loaded),
+            "query": query,
+        }
+
+    def _detect_triggers(self, query: str) -> tuple[list[str], Optional[str]]:
+        for trigger, modules in self.MANUAL_TRIGGERS.items():
+            if trigger in query:
+                if trigger in ("full load", "max brain", "all in"):
+                    return [], trigger
+                if trigger in ("solo core", "minimal"):
+                    return [], "solo"
+                return modules, trigger
+        return [], None
+
+    def _detect_keywords(self, query: str) -> set[str]:
+        found = set()
+        for keyword, modules in self._KEYWORD_TRIGGERS.items():
+            if keyword in query:
+                found.update(modules)
+        return found
+
+    def _enforce_budget(self, module_names: list[str], max_tokens: int, mode: str) -> list[str]:
+        if mode == "minimal":
+            max_tokens = min(max_tokens, 1000)
+        elif mode == "standard":
+            max_tokens = min(max_tokens, 2000)
+        elif mode == "full":
+            max_tokens = min(max_tokens, 4500)
+
+        total = 0
+        result = []
+        for name in module_names:
+            cost = self.TOKEN_ESTIMATES.get(name, 300)
+            if total + cost > max_tokens:
+                break
+            total += cost
+            result.append(name)
+        return result
+
+    def _load_module_content(self, name: str, agent_id: Optional[str] = None) -> Optional[str]:
+        """Load a module's content from Cerebro by tag search."""
+        try:
+            # Search by module name in content header
+            header_match = name.replace("module-", "")
+            results = self.cortex.recall(
+                query=f"ccbs {name}",
+                top_k=5,
+                agent_id=agent_id,
+                memory_types=[MemoryType.PROCEDURAL, MemoryType.SEMANTIC],
+            )
+            # Find exact match by header
+            for node, score in results:
+                if f"# Module: {header_match}" in node.content:
+                    return node.content
+            # If no header match, check if the highest-scoring result has ccbs tags
+            for node, score in results:
+                tags = node.metadata.tags
+                if "ccbs" in tags and (name in tags or header_match in tags):
+                    return node.content
+            return None
+        except Exception as exc:
+            logger.warning("Failed to load module %s: %s", name, exc)
+            return None
+
+
 # =============================================================================
 # Info & health
 # =============================================================================
@@ -2021,6 +2253,27 @@ async def watch_toggle(req: WatchToggleRequest):
         _watcher = None
 
     return {"enabled": req.enabled}
+
+
+# =============================================================================
+# Cognitive Bootstrap Endpoint
+# =============================================================================
+
+@app.post("/bootstrap")
+async def bootstrap(req: BootstrapRequest):
+    """Assemble a cognitive prompt block from CCBS modules based on query analysis.
+
+    Returns an assembled block of cognitive modules tailored to the session intent,
+    with manual trigger support, keyword auto-detection, and token budget enforcement.
+    """
+    ctx = get_cortex()
+    assembler = CognitiveBootstrapAssembler(ctx)
+    return assembler.assemble(
+        query=req.query,
+        mode=req.mode,
+        agent_id=req.agent_id,
+        max_tokens=req.max_tokens,
+    )
 
 
 # =============================================================================
