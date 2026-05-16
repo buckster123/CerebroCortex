@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CerebroCortex Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { --bg:#0f0f1a; --card:#1a1a2e; --accent:#00ff41; --cyan:#00d4ff; --pink:#ff0055; --gold:#ffd700; }
+  body { background:var(--bg); color:#e0e0e0; font-family:system-ui,sans-serif; }
+  .card { background:var(--card); border:1px solid #333; border-radius:8px; }
+  .accent { color:var(--accent); }
+  .btn { background:#222; border:1px solid #444; padding:6px 14px; border-radius:6px; cursor:pointer; transition:all .2s; }
+  .btn:hover { border-color:var(--accent); color:var(--accent); }
+  .btn-primary { background:var(--accent); color:#000; border:none; font-weight:600; }
+  .btn-primary:hover { background:#00cc33; }
+  .memory-card { border-left:3px solid var(--cyan); padding:12px; margin-bottom:10px; }
+  .memory-card.semantic { border-left-color:var(--cyan); }
+  .memory-card.episodic { border-left-color:var(--accent); }
+  .memory-card.procedural { border-left-color:var(--gold); }
+  .memory-card.affective { border-left-color:var(--pink); }
+  .tag { background:#222; padding:2px 8px; border-radius:12px; font-size:12px; margin-right:4px; }
+  #graph-canvas { width:100%; height:300px; background:#0a0a14; border-radius:8px; }
+  .loading { opacity:.6; pointer-events:none; }
+  ::-webkit-scrollbar { width:8px; }
+  ::-webkit-scrollbar-track { background:var(--bg); }
+  ::-webkit-scrollbar-thumb { background:#333; border-radius:4px; }
+</style>
+</head>
+<body class="min-h-screen">
+<div class="max-w-7xl mx-auto p-4">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold accent">CerebroCortex</h1>
+      <p class="text-sm text-gray-500">v0.4.0 — Brain-analogous memory system</p>
+    </div>
+    <div class="flex gap-2">
+      <button class="btn" onclick="loadStats()">↻ Refresh</button>
+      <button class="btn btn-primary" onclick="runDream()">✨ Dream</button>
+    </div>
+  </div>
+
+  <!-- Stats Row -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6" id="stats-row">
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold accent" id="stat-memories">-</div>
+      <div class="text-xs text-gray-500">Memories</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold" style="color:var(--cyan)" id="stat-links">-</div>
+      <div class="text-xs text-gray-500">Links</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold" style="color:var(--gold)" id="stat-episodes">-</div>
+      <div class="text-xs text-gray-500">Episodes</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold" style="color:var(--pink)" id="stat-agents">-</div>
+      <div class="text-xs text-gray-500">Agents</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold" style="color:#9d4edd" id="stat-schemas">-</div>
+      <div class="text-xs text-gray-500">Schemas</div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="card p-4 mb-6">
+    <div class="flex gap-2 mb-3">
+      <input id="search-input" type="text" placeholder="Search memories..."
+        class="flex-1 bg-black border border-gray-700 rounded px-3 py-2 text-white focus:border-green-500 outline-none"
+        onkeydown="if(event.key==='Enter')doSearch()">
+      <select id="search-type" class="bg-black border border-gray-700 rounded px-3 py-2 text-white">
+        <option value="">All types</option>
+        <option value="semantic">Semantic</option>
+        <option value="episodic">Episodic</option>
+        <option value="procedural">Procedural</option>
+        <option value="affective">Affective</option>
+        <option value="prospective">Prospective</option>
+        <option value="schematic">Schematic</option>
+      </select>
+      <button class="btn btn-primary" onclick="doSearch()">Search</button>
+    </div>
+    <div class="flex gap-2 text-sm">
+      <label class="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" id="search-vision" class="accent"> Vision
+      </label>
+      <label class="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" id="search-explain" class="accent"> Explain scores
+      </label>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <!-- Memories List -->
+    <div class="lg:col-span-2">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-bold text-lg">Memories</h2>
+        <span class="text-xs text-gray-500" id="result-count"></span>
+      </div>
+      <div id="memories-list" class="space-y-2">
+        <div class="card p-6 text-center text-gray-500">Type a query and hit Search</div>
+      </div>
+      <div class="flex justify-center gap-2 mt-4" id="pagination"></div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="space-y-4">
+      <!-- Emotional Summary -->
+      <div class="card p-4">
+        <h3 class="font-bold mb-3 text-sm">Emotional Tone</h3>
+        <div id="emotional-chart" class="space-y-2"></div>
+      </div>
+
+      <!-- Recent Episodes -->
+      <div class="card p-4">
+        <h3 class="font-bold mb-3 text-sm">Recent Episodes</h3>
+        <div id="episodes-list" class="space-y-2 text-sm"></div>
+      </div>
+
+      <!-- Graph Mini-View -->
+      <div class="card p-4">
+        <h3 class="font-bold mb-3 text-sm">Memory Network</h3>
+        <canvas id="graph-canvas"></canvas>
+        <p class="text-xs text-gray-600 mt-2 text-center">Click a memory to explore its neighborhood</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let currentOffset = 0;
+let currentQuery = "";
+let currentType = "";
+
+async function api(path, opts={}) {
+  const res = await fetch(API + path, { headers:{"Content-Type":"application/json"}, ...opts });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function loadStats() {
+  try {
+    const s = await api("/stats");
+    document.getElementById("stat-memories").textContent = s.nodes || 0;
+    document.getElementById("stat-links").textContent = s.links || 0;
+    document.getElementById("stat-episodes").textContent = s.episodes || 0;
+    document.getElementById("stat-agents").textContent = s.agents || 0;
+    document.getElementById("stat-schemas").textContent = s.schemas || 0;
+    loadEmotions();
+    loadEpisodes();
+    drawGraph();
+  } catch (e) { console.error("stats", e); }
+}
+
+async function loadEmotions() {
+  try {
+    const data = await api("/emotions/summary");
+    const el = document.getElementById("emotional-chart");
+    if (!data || !data.tones) { el.innerHTML = "<div class='text-gray-600 text-xs'>No data</div>"; return; }
+    const max = Math.max(...Object.values(data.tones), 1);
+    el.innerHTML = Object.entries(data.tones).map(([tone, count]) => `
+      <div class="flex items-center gap-2">
+        <div class="w-16 text-xs capitalize">${tone}</div>
+        <div class="flex-1 bg-gray-800 rounded h-4 overflow-hidden">
+          <div class="h-full" style="width:${(count/max*100)}%;background:${toneColor(tone)}"></div>
+        </div>
+        <div class="text-xs w-6 text-right">${count}</div>
+      </div>
+    `).join("");
+  } catch (e) { console.error("emotions", e); }
+}
+
+function toneColor(tone) {
+  const map = { positive:"#00ff41", negative:"#ff0055", neutral:"#00d4ff", mixed:"#ffd700" };
+  return map[tone] || "#888";
+}
+
+async function loadEpisodes() {
+  try {
+    const eps = await api("/episodes?limit=5");
+    const el = document.getElementById("episodes-list");
+    if (!eps || !eps.length) { el.innerHTML = "<div class='text-gray-600'>No episodes</div>"; return; }
+    el.innerHTML = eps.map(ep => `
+      <div class="p-2 bg-black/30 rounded cursor-pointer hover:bg-black/50" onclick="searchEpisode('${ep.id}')">
+        <div class="font-medium">${ep.title || "(untitled)"}</div>
+        <div class="text-xs text-gray-500">${ep.steps} steps · ${ep.valence}</div>
+      </div>
+    `).join("");
+  } catch (e) { console.error("episodes", e); }
+}
+
+async function doSearch(offset=0) {
+  currentOffset = offset;
+  currentQuery = document.getElementById("search-input").value;
+  currentType = document.getElementById("search-type").value;
+  const includeVision = document.getElementById("search-vision").checked;
+  const explain = document.getElementById("search-explain").checked;
+
+  const list = document.getElementById("memories-list");
+  list.classList.add("loading");
+
+  try {
+    const body = {
+      query: currentQuery,
+      top_k: 10,
+      offset: offset,
+      include_vision: includeVision,
+      explain: explain,
+    };
+    if (currentType) body.memory_types = [currentType];
+
+    const res = await api("/recall", { method:"POST", body: JSON.stringify(body) });
+    const results = res.results || res;
+    document.getElementById("result-count").textContent = `${results.length} results`;
+
+    if (!results.length) {
+      list.innerHTML = `<div class="card p-6 text-center text-gray-500">No memories found for "${currentQuery}"</div>`;
+    } else {
+      list.innerHTML = results.map((r, i) => {
+        const node = r.node || r;
+        const score = r.score !== undefined ? r.score : (r.similarity || 0);
+        const type = (node.metadata?.memory_type || node.type || "semantic").toLowerCase();
+        const tags = (node.metadata?.tags || node.tags || []);
+        const explainInfo = explain && r.score_breakdown ? `
+          <div class="text-xs text-gray-600 mt-1">vector=${r.score_breakdown?.vector?.toFixed(2)} actr=${r.score_breakdown?.actr?.toFixed(2)} fsrs=${r.score_breakdown?.fsrs?.toFixed(2)} sal=${r.score_breakdown?.salience?.toFixed(2)}</div>
+        ` : "";
+        return `
+          <div class="card memory-card ${type}">
+            <div class="flex justify-between items-start">
+              <div class="flex-1">
+                <div class="text-sm leading-relaxed">${escapeHtml(node.content).substring(0, 300)}${node.content?.length>300?"...":""}</div>
+                <div class="flex flex-wrap gap-1 mt-2">${tags.map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>
+                ${explainInfo}
+              </div>
+              <div class="text-right ml-3 shrink-0">
+                <div class="text-lg font-bold accent">${(score).toFixed(3)}</div>
+                <div class="text-xs text-gray-500 capitalize">${type}</div>
+                <div class="text-xs text-gray-600 mt-1">${(node.metadata?.salience || node.salience || 0).toFixed(2)} sal</div>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-2 text-xs">
+              <button class="btn" onclick="getNeighbors('${node.id}')">Neighbors</button>
+              <button class="btn" onclick="deleteMemory('${node.id}')">Delete</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Pagination
+    const pag = document.getElementById("pagination");
+    pag.innerHTML = "";
+    if (offset > 0) pag.innerHTML += `<button class="btn" onclick="doSearch(${offset-10})">← Prev</button>`;
+    if (results.length === 10) pag.innerHTML += `<button class="btn" onclick="doSearch(${offset+10})">Next →</button>`;
+  } catch (e) {
+    list.innerHTML = `<div class="card p-6 text-center text-red-400">Error: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    list.classList.remove("loading");
+  }
+}
+
+async function getNeighbors(id) {
+  try {
+    const data = await api("/graph/neighbors/" + id);
+    alert(`Neighbors of ${id.substring(0,16)}...:\n` + (data.neighbors || []).map(n => `- ${n.link_type}: ${n.content?.substring(0,60)}...`).join("\n"));
+  } catch (e) { alert("Error: " + e.message); }
+}
+
+async function deleteMemory(id) {
+  if (!confirm("Soft-delete this memory?")) return;
+  try {
+    await api("/memory/" + id, { method:"DELETE" });
+    doSearch(currentOffset);
+    loadStats();
+  } catch (e) { alert("Error: " + e.message); }
+}
+
+async function runDream() {
+  if (!confirm("Run dream consolidation cycle? This uses LLM tokens.")) return;
+  try {
+    const btn = event.target;
+    btn.textContent = "Dreaming...";
+    btn.disabled = true;
+    await api("/dream/run", { method:"POST" });
+    btn.textContent = "✨ Dream";
+    btn.disabled = false;
+    loadStats();
+    alert("Dream cycle complete!");
+  } catch (e) { alert("Error: " + e.message); }
+}
+
+function searchEpisode(epId) {
+  document.getElementById("search-input").value = "episode:" + epId;
+  doSearch();
+}
+
+function escapeHtml(t) {
+  if (!t) return "";
+  return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Simple force-directed graph on canvas
+async function drawGraph() {
+  const canvas = document.getElementById("graph-canvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  const W = canvas.width, H = canvas.height;
+
+  try {
+    const data = await api("/graph/data?limit=50");
+    const nodes = (data.nodes || []).map((n,i) => ({
+      x: Math.random()*W, y: Math.random()*H,
+      vx:0, vy:0, r: n.salience ? 4+n.salience*8 : 5,
+      color: typeColor(n.memory_type),
+      ...n
+    }));
+    const links = (data.links || []).filter(l => nodes.find(n=>n.id===l.source) && nodes.find(n=>n.id===l.target));
+
+    if (!nodes.length) { ctx.fillStyle="#333"; ctx.font="12px sans-serif"; ctx.fillText("No graph data", W/2-40, H/2); return; }
+
+    function typeColor(t) {
+      const map = { semantic:"#00d4ff", episodic:"#00ff41", procedural:"#ffd700", affective:"#ff0055", prospective:"#9d4edd", schematic:"#ff6b35" };
+      return map[t] || "#888";
+    }
+
+    function step() {
+      // Forces
+      for (let n of nodes) {
+        n.vx *= 0.9; n.vy *= 0.9;
+        // Center gravity
+        n.vx += (W/2 - n.x) * 0.001;
+        n.vy += (H/2 - n.y) * 0.001;
+      }
+      for (let l of links) {
+        const a = nodes.find(n=>n.id===l.source);
+        const b = nodes.find(n=>n.id===l.target);
+        if (!a || !b) continue;
+        const dx = b.x-a.x, dy = b.y-a.y, dist = Math.sqrt(dx*dx+dy*dy)||1;
+        const force = (dist - 60) * 0.005;
+        const fx = (dx/dist)*force, fy = (dy/dist)*force;
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      }
+      // Repulsion
+      for (let i=0;i<nodes.length;i++) for (let j=i+1;j<nodes.length;j++) {
+        const a=nodes[i], b=nodes[j];
+        const dx=b.x-a.x, dy=b.y-a.y, dist=Math.sqrt(dx*dx+dy*dy)||1;
+        if (dist < 100) {
+          const force = -200/(dist*dist);
+          const fx=(dx/dist)*force, fy=(dy/dist)*force;
+          a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+        }
+      }
+      // Integrate
+      for (let n of nodes) {
+        n.x = Math.max(n.r, Math.min(W-n.r, n.x+n.vx));
+        n.y = Math.max(n.r, Math.min(H-n.r, n.y+n.vy));
+      }
+      // Draw
+      ctx.fillStyle="#0a0a14"; ctx.fillRect(0,0,W,H);
+      for (let l of links) {
+        const a=nodes.find(n=>n.id===l.source), b=nodes.find(n=>n.id===l.target);
+        if (!a||!b) continue;
+        ctx.strokeStyle="#333"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      }
+      for (let n of nodes) {
+        ctx.fillStyle=n.color; ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,Math.PI*2); ctx.fill();
+      }
+      requestAnimationFrame(step);
+    }
+    step();
+  } catch (e) { ctx.fillStyle="#333"; ctx.font="12px sans-serif"; ctx.fillText("Graph unavailable", W/2-50, H/2); }
+}
+
+// Init
+loadStats();
+</script>
+</body>
+</html>

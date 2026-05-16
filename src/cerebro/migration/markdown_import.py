@@ -135,9 +135,12 @@ class MarkdownImporter:
             )
 
             try:
-                self.cortex.graph.add_node(node)
-                coll = self.cortex._collection_for_type(node.metadata.memory_type)
-                self.cortex.vector.add_node(coll, node)
+                if self.cortex._coordinator:
+                    from cerebro.storage.coordinator import StorageCoordinator
+                    coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+                    self.cortex._coordinator.store_node(node, collection=coll)
+                else:
+                    self.cortex.graph.add_node(node)
                 report.memories_imported += 1
             except Exception as e:
                 report.errors.append(f"Section '{title}': {e}")

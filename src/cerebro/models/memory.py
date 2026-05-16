@@ -4,9 +4,9 @@ from datetime import datetime
 from typing import Optional
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
-from cerebro.types import EmotionalValence, MemoryLayer, MemoryType, Visibility
+from cerebro.types import EmotionalValence, MediaType, MemoryLayer, MemoryType, Visibility
 
 
 class StrengthState(BaseModel):
@@ -46,10 +46,18 @@ class MemoryMetadata(BaseModel):
     visibility: Visibility = Visibility.SHARED
     layer: MemoryLayer = MemoryLayer.WORKING
     memory_type: MemoryType = MemoryType.SEMANTIC
+    media_type: MediaType = MediaType.TEXT
 
     # Content classification
     tags: list[str] = Field(default_factory=list)
     concepts: list[str] = Field(default_factory=list, description="Extracted key concepts")
+
+    # Attachments and source
+    attachments: list = Field(default_factory=list, description="Media attachments")
+    source_file: Optional[str] = None   # path of ingested file
+
+    # CRUD lifecycle
+    deleted_at: Optional[str] = None   # ISO timestamp of soft-delete
 
     # Temporal context
     session_id: Optional[str] = None
@@ -102,4 +110,6 @@ class MemoryNode(BaseModel):
     # Search result field (populated during recall, not persisted)
     similarity: Optional[float] = Field(default=None, exclude=True)
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
+    @field_serializer("created_at", "last_accessed_at", "promoted_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat() if value else ""

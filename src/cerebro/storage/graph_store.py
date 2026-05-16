@@ -16,12 +16,13 @@ from typing import Optional
 
 import igraph  # type: ignore
 
+from cerebro.models.attachment import Attachment
 from cerebro.models.agent import AgentProfile
 from cerebro.models.episode import Episode, EpisodeStep
 from cerebro.models.link import AssociativeLink
 from cerebro.models.memory import MemoryMetadata, MemoryNode, StrengthState
 from cerebro.storage.sqlite_schema import initialize_database
-from cerebro.types import LinkType, MemoryLayer, MemoryType
+from cerebro.types import LinkType, MediaType, MemoryLayer, MemoryType
 
 
 class GraphStore:
@@ -34,6 +35,12 @@ class GraphStore:
         self._id_to_vertex: dict[str, int] = {}
         self._vertex_to_id: dict[int, str] = {}
         self._last_data_version: Optional[int] = None  # Track SQLite data_version for multi-process sync
+
+    @staticmethod
+    def _active_where(alias: str = "") -> str:
+        """Return a WHERE clause fragment that excludes soft-deleted rows."""
+        prefix = f"{alias}." if alias else ""
+        return f"{prefix}deleted_at IS NULL"
 
     def initialize(self) -> None:
         """Create/open database and load graph into memory."""
@@ -69,7 +76,7 @@ class GraphStore:
         self._vertex_to_id = {}
 
         # Load all node IDs
-        rows = self.conn.execute("SELECT id FROM memory_nodes").fetchall()
+        rows = self.conn.execute("SELECT id FROM memory_nodes WHERE deleted_at IS NULL").fetchall()
         if rows:
             ids = [r["id"] for r in rows]
             g.add_vertices(len(ids))
@@ -153,7 +160,8 @@ class GraphStore:
                 tags_json, concepts_json, responding_to_json, related_agents_json,
                 recipient,
                 source, derived_from_json, metadata_json,
-                created_at, last_accessed_at, promoted_at
+                created_at, last_accessed_at, promoted_at,
+                media_type, source_file
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
@@ -164,7 +172,8 @@ class GraphStore:
                 ?, ?, ?, ?,
                 ?,
                 ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?,
+                ?, ?
             )""",
             (
                 node.id, node.content, content_hash, meta.memory_type.value, meta.layer.value,
@@ -183,9 +192,15 @@ class GraphStore:
                 node.created_at.isoformat(),
                 node.last_accessed_at.isoformat() if node.last_accessed_at else None,
                 node.promoted_at.isoformat() if node.promoted_at else None,
+                meta.media_type.value,
+                meta.source_file,
             ),
         )
         self.conn.commit()
+
+        # Insert attachments
+        for att in meta.attachments:
+            self._insert_attachment(node.id, att)
 
         # Add to igraph
         idx = self.graph.vcount()
@@ -196,25 +211,110 @@ class GraphStore:
 
         return node.id
 
-    def get_node(self, node_id: str) -> Optional[MemoryNode]:
-        """Get a memory node from SQLite by ID."""
+    def _insert_attachment(self, memory_id: str, att: Attachment) -> None:
+        """Insert an attachment record into SQLite."""
+        self.conn.execute(
+            """INSERT INTO attachments (
+                id, memory_id, mime_type, media_type, file_path,
+                original_bytes_hash, text_description, vision_embedding_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                mime_type=excluded.mime_type,
+                media_type=excluded.media_type,
+                file_path=excluded.file_path,
+                original_bytes_hash=excluded.original_bytes_hash,
+                text_description=excluded.text_description,
+                vision_embedding_id=excluded.vision_embedding_id""",
+            (
+                att.id, memory_id, att.mime_type, att.media_type.value,
+                att.file_path, att.original_bytes_hash, att.text_description,
+                att.vision_embedding_id, att.created_at.isoformat(),
+            ),
+        )
+        self.conn.commit()
+
+    def _load_attachments(self, memory_id: str) -> list[Attachment]:
+        """Load all attachments for a memory node."""
+        rows = self.conn.execute(
+            "SELECT * FROM attachments WHERE memory_id = ?", (memory_id,)
+        ).fetchall()
+        attachments = []
+        for r in rows:
+            try:
+                mt = MediaType(r["media_type"])
+            except ValueError:
+                mt = MediaType.UNKNOWN
+            attachments.append(Attachment(
+                id=r["id"],
+                mime_type=r["mime_type"],
+                media_type=mt,
+                file_path=r["file_path"],
+                original_bytes_hash=r["original_bytes_hash"],
+                text_description=r["text_description"],
+                vision_embedding_id=r["vision_embedding_id"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+            ))
+        return attachments
+
+    def get_node(self, node_id: str, include_deleted: bool = False) -> Optional[MemoryNode]:
+        """Get a memory node from SQLite by ID, including attachments.
+
+        Args:
+            node_id: Memory ID to retrieve.
+            include_deleted: If True, return the node even if soft-deleted.
+        """
+        where = "id = ?" if include_deleted else "id = ? AND deleted_at IS NULL"
         row = self.conn.execute(
-            "SELECT * FROM memory_nodes WHERE id = ?", (node_id,)
+            f"SELECT * FROM memory_nodes WHERE {where}", (node_id,)
         ).fetchone()
         if not row:
             return None
-        return self._row_to_memory_node(row)
+        node = self._row_to_memory_node(row)
+        node.metadata.attachments = self._load_attachments(node_id)
+        return node
 
-    def delete_node(self, node_id: str) -> bool:
-        """Delete a node from SQLite (cascade deletes links). Rebuild igraph."""
-        cursor = self.conn.execute("DELETE FROM memory_nodes WHERE id = ?", (node_id,))
+    def delete_node(self, node_id: str, soft: bool = False) -> bool:
+        """Delete a node from SQLite. Supports soft-delete (default) or hard delete."""
+        if soft:
+            cursor = self.conn.execute(
+                "UPDATE memory_nodes SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+                (node_id,),
+            )
+        else:
+            cursor = self.conn.execute("DELETE FROM memory_nodes WHERE id = ?", (node_id,))
         self.conn.commit()
         if cursor.rowcount > 0:
-            # igraph doesn't support efficient single-vertex deletion;
-            # for occasional deletes, rebuild is simplest and safest
             self._rebuild_igraph()
             return True
         return False
+
+    def restore_node(self, node_id: str) -> bool:
+        """Undelete a soft-deleted memory node."""
+        cursor = self.conn.execute(
+            "UPDATE memory_nodes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+            (node_id,),
+        )
+        self.conn.commit()
+        if cursor.rowcount > 0:
+            self._rebuild_igraph()
+            return True
+        return False
+
+    def purge_node(self, node_id: str) -> bool:
+        """Permanently delete a node (bypass soft-delete)."""
+        return self.delete_node(node_id, soft=False)
+
+    def list_deleted(self, agent_id: Optional[str] = None, limit: int = 50) -> list[MemoryNode]:
+        """List soft-deleted memories."""
+        query = f"SELECT * FROM memory_nodes WHERE deleted_at IS NOT NULL"
+        params: list = []
+        if agent_id:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        query += " ORDER BY deleted_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._row_to_memory_node(r) for r in rows]
 
     def update_node_strength(self, node_id: str, strength: StrengthState) -> bool:
         """Update only the strength parameters for a node."""
@@ -261,10 +361,63 @@ class GraphStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def get_nodes_since(self, since: datetime) -> list[MemoryNode]:
-        """Get all nodes created since a given datetime."""
+    # ========================================================================
+    # Memory versioning
+    # ========================================================================
+
+    def save_version(self, node: MemoryNode, edited_by: Optional[str] = None, change_note: Optional[str] = None) -> int:
+        """Snapshot the current state of a memory into the versions table.
+
+        Returns the version row id.
+        """
+        cursor = self.conn.execute(
+            """INSERT INTO memory_versions (
+                memory_id, content, tags_json, salience, visibility, edited_by, edited_at, change_note
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)""",
+            (
+                node.id, node.content, json.dumps(node.metadata.tags),
+                node.metadata.salience, node.metadata.visibility.value,
+                edited_by, change_note,
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid or 0
+
+    def get_memory_versions(self, memory_id: str, limit: int = 10) -> list[dict]:
+        """Get version history for a memory, newest first."""
         rows = self.conn.execute(
-            "SELECT * FROM memory_nodes WHERE created_at >= ? ORDER BY created_at",
+            "SELECT * FROM memory_versions WHERE memory_id = ? ORDER BY edited_at DESC LIMIT ?",
+            (memory_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_version(self, version_id: int) -> Optional[dict]:
+        """Get a specific version by its auto-increment id."""
+        row = self.conn.execute(
+            "SELECT * FROM memory_versions WHERE id = ?", (version_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def purge_deleted_older_than(self, days: int = 30) -> int:
+        """Hard-delete all soft-deleted memories older than N days.
+
+        Returns the number of purged memories.
+        """
+        cursor = self.conn.execute(
+            "DELETE FROM memory_nodes WHERE deleted_at IS NOT NULL "
+            "AND julianday('now') - julianday(deleted_at) > ?",
+            (days,),
+        )
+        self.conn.commit()
+        purged = cursor.rowcount
+        if purged > 0:
+            self._rebuild_igraph()
+        return purged
+
+    def get_nodes_since(self, since: datetime) -> list[MemoryNode]:
+        """Get all active nodes created since a given datetime."""
+        rows = self.conn.execute(
+            "SELECT * FROM memory_nodes WHERE deleted_at IS NULL AND created_at >= ? ORDER BY created_at",
             (since.isoformat(),),
         ).fetchall()
         return [self._row_to_memory_node(r) for r in rows]
@@ -273,24 +426,24 @@ class GraphStore:
         """Get all memory node IDs, optionally scoped to an agent's visible memories."""
         if agent_id:
             rows = self.conn.execute(
-                "SELECT id FROM memory_nodes WHERE visibility='shared' "
+                "SELECT id FROM memory_nodes WHERE deleted_at IS NULL AND (visibility='shared' "
                 "OR (visibility='private' AND agent_id=?) "
-                "OR (visibility='thread' AND agent_id=?)",
+                "OR (visibility='thread' AND agent_id=?))",
                 (agent_id, agent_id),
             ).fetchall()
         else:
-            rows = self.conn.execute("SELECT id FROM memory_nodes").fetchall()
+            rows = self.conn.execute("SELECT id FROM memory_nodes WHERE deleted_at IS NULL").fetchall()
         return [r["id"] for r in rows]
 
     def count_nodes(self) -> int:
-        """Count total memory nodes."""
-        return self.conn.execute("SELECT COUNT(*) as c FROM memory_nodes").fetchone()["c"]
+        """Count total active memory nodes."""
+        return self.conn.execute("SELECT COUNT(*) as c FROM memory_nodes WHERE deleted_at IS NULL").fetchone()["c"]
 
     def find_duplicate_content(self, content: str) -> Optional[str]:
-        """Check if content already exists (by hash). Returns existing ID or None."""
+        """Check if active content already exists (by hash). Returns existing ID or None."""
         h = self._content_hash(content)
         row = self.conn.execute(
-            "SELECT id FROM memory_nodes WHERE content_hash = ?", (h,)
+            "SELECT id FROM memory_nodes WHERE deleted_at IS NULL AND content_hash = ?", (h,)
         ).fetchone()
         return row["id"] if row else None
 
@@ -684,9 +837,9 @@ class GraphStore:
         self._ensure_igraph_fresh()
         if agent_id:
             scope = (
-                "WHERE visibility='shared' "
+                "WHERE deleted_at IS NULL AND (visibility='shared' "
                 "OR (visibility='private' AND agent_id=?) "
-                "OR (visibility='thread' AND agent_id=?)"
+                "OR (visibility='thread' AND agent_id=?))"
             )
             params = (agent_id, agent_id)
             node_count = self.conn.execute(
@@ -715,13 +868,13 @@ class GraphStore:
 
             type_counts = {}
             for row in self.conn.execute(
-                "SELECT memory_type, COUNT(*) as c FROM memory_nodes GROUP BY memory_type"
+                "SELECT memory_type, COUNT(*) as c FROM memory_nodes WHERE deleted_at IS NULL GROUP BY memory_type"
             ).fetchall():
                 type_counts[row["memory_type"]] = row["c"]
 
             layer_counts = {}
             for row in self.conn.execute(
-                "SELECT layer, COUNT(*) as c FROM memory_nodes GROUP BY layer"
+                "SELECT layer, COUNT(*) as c FROM memory_nodes WHERE deleted_at IS NULL GROUP BY layer"
             ).fetchall():
                 layer_counts[row["layer"]] = row["c"]
 
@@ -753,6 +906,14 @@ class GraphStore:
     @staticmethod
     def _row_to_memory_node(row: sqlite3.Row) -> MemoryNode:
         """Convert a SQLite row to a MemoryNode."""
+        # Handle new columns that may not exist in older DB rows (defensive)
+        media_type_val = row["media_type"] if "media_type" in row.keys() else "text"
+        source_file_val = row["source_file"] if "source_file" in row.keys() else None
+        try:
+            media_type = MediaType(media_type_val)
+        except ValueError:
+            media_type = MediaType.TEXT
+
         return MemoryNode(
             id=row["id"],
             content=row["content"],
@@ -761,6 +922,7 @@ class GraphStore:
                 visibility=row["visibility"],
                 layer=MemoryLayer(row["layer"]),
                 memory_type=MemoryType(row["memory_type"]),
+                media_type=media_type,
                 tags=json.loads(row["tags_json"]),
                 concepts=json.loads(row["concepts_json"]),
                 session_id=row["session_id"],
@@ -774,6 +936,8 @@ class GraphStore:
                 salience=row["salience"],
                 source=row["source"],
                 derived_from=json.loads(row["derived_from_json"]),
+                source_file=source_file_val,
+                deleted_at=row["deleted_at"] if "deleted_at" in row.keys() else None,
             ),
             strength=StrengthState(
                 stability=row["stability"],

@@ -31,9 +31,9 @@ logger = logging.getLogger("cerebro-schema")
 class SchemaEngine:
     """Extracts and manages schematic memories (abstract patterns)."""
 
-    def __init__(self, graph: GraphStore, vector_store=None):
+    def __init__(self, graph: GraphStore, coordinator=None):
         self._graph = graph
-        self._vector = vector_store
+        self._coordinator = coordinator
 
     def create_schema(
         self,
@@ -77,13 +77,12 @@ class SchemaEngine:
             strength=StrengthState(stability=7.0),  # 1 week; promoted schemas get 30d
         )
 
-        self._graph.add_node(node)
-
-        # Dual-write to vector store
-        if self._vector:
-            from cerebro.cortex import CerebroCortex
-            coll = CerebroCortex._collection_for_type(node.metadata.memory_type)
-            self._vector.add_node(coll, node)
+        if self._coordinator:
+            from cerebro.storage.coordinator import StorageCoordinator
+            coll = StorageCoordinator.collection_for_type(node.metadata.memory_type)
+            self._coordinator.store_node(node, collection=coll)
+        else:
+            self._graph.add_node(node)
 
         # Link to source memories
         for source_id in source_ids:

@@ -16,6 +16,7 @@ Usage:
 
 import json
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -959,6 +960,54 @@ def dream_status(as_json):
         click.echo(f"  Success:  {report.success}")
 
 
+@dream.command("watch")
+@click.option("--interval-hours", default=24, help="Hours between dream cycles")
+@click.option("--max-cycles", default=0, help="Max cycles to run (0 = infinite)")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def dream_watch(interval_hours, max_cycles, as_json):
+    """Run the dream engine on a schedule (blocks until interrupted)."""
+    import time as _time
+    ctx = get_cortex()
+
+    from cerebro.engines.dream import DreamEngine
+    try:
+        from cerebro.utils.llm import LLMClient
+        llm = LLMClient()
+    except Exception:
+        llm = None
+        click.echo("Warning: No LLM available. LLM-assisted phases will be skipped.", err=True)
+
+    engine = DreamEngine(ctx, llm_client=llm)
+    cycle = 0
+
+    click.echo(f"Dream watch started: interval={interval_hours}h, max_cycles={max_cycles or 'infinite'}")
+    click.echo("Press Ctrl+C to stop.\n")
+
+    try:
+        while True:
+            cycle += 1
+            if max_cycles > 0 and cycle > max_cycles:
+                click.echo(f"Reached max cycles ({max_cycles}). Stopping.")
+                break
+
+            click.echo(f"[{cycle}] Running dream cycle at {_time.strftime('%Y-%m-%d %H:%M:%S')}...")
+            reports = engine.run_all_agents_cycle()
+
+            if as_json:
+                _json_out([r.to_dict() for r in reports])
+            else:
+                for report in reports:
+                    agent_label = report.agent_id or "unscoped"
+                    click.echo(f"  {agent_label}: {report.total_duration_seconds:.1f}s, "
+                               f"{report.episodes_consolidated} episodes, "
+                               f"{'OK' if report.success else 'FAIL'}")
+
+            if max_cycles == 0 or cycle < max_cycles:
+                click.echo(f"  Sleeping {interval_hours}h...")
+                _time.sleep(interval_hours * 3600)
+    except KeyboardInterrupt:
+        click.echo("\nDream watch stopped.")
+
 
 # =============================================================================
 # Graph Exploration (Phase D)
@@ -1452,6 +1501,55 @@ def doctor_audit(fix_fingerprint, as_json):
         click.echo("      cerebro doctor audit --fix-fingerprint")
     elif not any_issue:
         click.echo("All collections are in sync with the current embedder.")
+
+
+# =============================================================================
+# Watch (file watcher)
+# =============================================================================
+
+@cli.command()
+@click.argument("directories", nargs=-1)
+@click.option("--agent", default="CLAUDE", help="Agent ID for ingested memories")
+@click.option("--tags", default="auto-ingested", help="Comma-separated tags")
+@click.option("--patterns", default="", help="Comma-separated file patterns (e.g. '*.md,*.txt')")
+@click.option("--delay", default=1.0, help="Delay in seconds before ingesting after file creation")
+def watch(directories, agent, tags, patterns, delay):
+    """Watch directories and auto-ingest new files.
+
+    Examples:
+        cerebro watch ~/Dropbox/CerebroInbox
+        cerebro watch /var/inbox --tags "production,auto"
+        cerebro watch ~/notes --patterns "*.md,*.txt"
+    """
+    if not directories:
+        click.echo("Error: No directories specified.", err=True)
+        sys.exit(1)
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else ["auto-ingested"]
+    pattern_list = [p.strip() for p in patterns.split(",")] if patterns else None
+
+    ctx = get_cortex()
+    from cerebro.watch import FileWatcher
+
+    watcher = FileWatcher(
+        ctx,
+        agent_id=agent,
+        tags=tag_list,
+        patterns=pattern_list,
+        delay_seconds=delay,
+    )
+    watcher.start()
+
+    for d in directories:
+        watcher.add_directory(d)
+
+    click.echo(f"Watching {watcher.watched_count} directorie(s). Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        click.echo("\nStopping watcher...")
+        watcher.stop()
 
 
 # =============================================================================

@@ -3,6 +3,18 @@
 from enum import Enum
 
 
+class MediaType(str, Enum):
+    """Supported media types for multimodal memory attachments."""
+    TEXT = "text"
+    IMAGE = "image"
+    PDF = "pdf"
+    AUDIO = "audio"
+    VIDEO = "video"
+    HTML = "html"
+    CSV = "csv"
+    UNKNOWN = "unknown"
+
+
 class MemoryType(str, Enum):
     """The six modalities of memory."""
     EPISODIC = "episodic"        # temporal sequences with context
