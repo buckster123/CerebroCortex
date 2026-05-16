@@ -61,6 +61,12 @@ _SETTING_MAP: dict[str, str] = {
     "advanced.fsrs_initial_difficulty": "FSRS_INITIAL_DIFFICULTY",
     # Agent
     "agent.default_agent_id": "DEFAULT_AGENT_ID",
+    # Watch
+    "watch.enabled": "WATCH_ENABLED",
+    "watch.dirs": "WATCH_DIRS",
+    "watch.agent_id": "WATCH_AGENT_ID",
+    "watch.tags": "WATCH_TAGS",
+    "watch.patterns": "WATCH_FILE_PATTERNS",
 }
 
 # Env-file key → config.py attribute (only for secrets)

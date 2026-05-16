@@ -2,6 +2,8 @@
 
 import os
 from pathlib import Path
+from typing import Optional
+
 from cerebro.types import LinkType
 
 
@@ -169,6 +171,20 @@ OPENAI_COMPAT_EMBEDDING_MODEL = ""
 
 # Near-duplicate detection threshold (cosine similarity). Set to 1.0 to disable.
 NEAR_DEDUP_THRESHOLD = 0.95
+
+# =============================================================================
+# File Watcher (auto-ingestion)
+# =============================================================================
+WATCH_ENABLED = False
+WATCH_DIRS: list[str] = []
+WATCH_AGENT_ID: Optional[str] = None
+WATCH_TAGS: list[str] = ["auto-ingested"]
+WATCH_FILE_PATTERNS: list[str] = [
+    "*.md", "*.txt", "*.json",
+    "*.pdf", "*.html", "*.csv",
+    "*.png", "*.jpg", "*.jpeg", "*.webp",
+    "*.py", "*.js", "*.ts", "*.go", "*.rs", "*.java", "*.rb", "*.sh",
+]
 
 # =============================================================================
 # Server

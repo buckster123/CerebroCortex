@@ -58,6 +58,7 @@ Endpoints:
 import asyncio
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -65,9 +66,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from cerebro.events import event_bus
@@ -77,6 +79,8 @@ from cerebro.config import (
     API_PORT,
     MCP_SERVER_NAME,
     MCP_SERVER_VERSION,
+    WATCH_ENABLED,
+    WATCH_DIRS,
     WEB_DIR,
 )
 from cerebro.cortex import CerebroCortex
@@ -115,6 +119,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve dashboard static assets (CSS, JS)
+if (WEB_DIR / "css").is_dir():
+    app.mount("/css", StaticFiles(directory=str(WEB_DIR / "css")), name="css")
+if (WEB_DIR / "js").is_dir():
+    app.mount("/js", StaticFiles(directory=str(WEB_DIR / "js")), name="js")
+
 # Singleton cortex instance
 _cortex: Optional[CerebroCortex] = None
 _dream_engine = None
@@ -138,6 +148,17 @@ async def startup_load_settings():
         logger.info("Settings loaded from disk")
     except Exception as e:
         logger.warning(f"Failed to load settings on startup: {e}")
+
+    # Auto-start file watcher if enabled in settings
+    if WATCH_ENABLED and WATCH_DIRS:
+        try:
+            watcher = _get_watcher()
+            watcher.start()
+            for d in WATCH_DIRS:
+                watcher.add_directory(d)
+            logger.info(f"File watcher auto-started with {watcher.watched_count} directorie(s)")
+        except Exception as e:
+            logger.warning(f"Failed to auto-start file watcher: {e}")
 
 
 # =============================================================================
@@ -300,6 +321,42 @@ class SettingsUpdateRequest(BaseModel):
     dream: Optional[dict] = None
     scoring: Optional[dict] = None
     advanced: Optional[dict] = None
+    watch: Optional[dict] = None
+
+
+class RenameTagRequest(BaseModel):
+    old_tag: str
+    new_tag: str
+    agent_id: Optional[str] = None
+
+
+class MergeTagsRequest(BaseModel):
+    source_tags: list[str]
+    target_tag: str
+    agent_id: Optional[str] = None
+
+
+class BulkDeleteRequest(BaseModel):
+    memory_ids: list[str]
+    soft: bool = True
+    agent_id: Optional[str] = None
+
+
+class BulkVisibilityRequest(BaseModel):
+    memory_ids: list[str]
+    visibility: str
+    agent_id: Optional[str] = None
+
+
+class ExportRequest(BaseModel):
+    memory_ids: Optional[list[str]] = None
+    agent_id: Optional[str] = None
+    fmt: str = "json"
+
+
+class WatchToggleRequest(BaseModel):
+    enabled: bool
+    dirs: Optional[list[str]] = None
 
 
 # =============================================================================
@@ -1449,7 +1506,7 @@ async def update_settings(req: SettingsUpdateRequest):
     """Partial update of settings. Persists to settings.json and hot-reloads."""
     global _dream_engine
     updates = {}
-    for section in ("llm", "llm_keys", "dream", "scoring", "advanced"):
+    for section in ("llm", "llm_keys", "dream", "scoring", "advanced", "watch"):
         val = getattr(req, section, None)
         if val is not None:
             updates[section] = val
@@ -1473,6 +1530,296 @@ async def reset_all_settings():
     reset_settings()
     _dream_engine = None
     return {"reset": True}
+
+
+# =============================================================================
+# Ingestion (file upload)
+# =============================================================================
+
+@app.post("/ingest/upload")
+async def ingest_upload(
+    file: UploadFile = File(...),
+    tags: Optional[str] = None,
+    agent_id: Optional[str] = None,
+):
+    """Upload and ingest a single file.
+
+    Args:
+        file: The file to upload.
+        tags: Comma-separated tags (e.g. "project,research").
+        agent_id: Agent ID for attribution.
+    """
+    import tempfile
+
+    ctx = get_cortex()
+    tag_list = [t.strip() for t in tags.split(",")] if tags else ["uploaded"]
+    agent = agent_id or os.environ.get("CEREBRO_AGENT_ID", "CLAUDE")
+
+    suffix = Path(file.filename or "upload").suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        from cerebro.ingestion import IngestionPipeline
+        pipeline = IngestionPipeline(ctx)
+        report = pipeline.ingest_file(tmp_path, tags=tag_list, agent_id=agent)
+        if report.errors:
+            raise HTTPException(400, f"Ingestion errors: {report.errors}")
+        _emit_stats_refresh()
+        return {
+            "file": file.filename,
+            "memories_created": report.memories_created,
+            "duration_seconds": round(report.duration_seconds, 3),
+        }
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+# =============================================================================
+# Trash (soft-deleted memories)
+# =============================================================================
+
+@app.get("/trash")
+async def list_trash(agent_id: Optional[str] = None, limit: int = Query(50, ge=1, le=200)):
+    """List soft-deleted memories."""
+    ctx = get_cortex()
+    nodes = ctx.list_deleted(agent_id=agent_id, limit=limit)
+    return {
+        "count": len(nodes),
+        "memories": [
+            {
+                "id": n.id,
+                "content": n.content,
+                "type": n.metadata.memory_type.value,
+                "deleted_at": n.metadata.deleted_at if hasattr(n.metadata, 'deleted_at') else None,
+                "tags": n.metadata.tags,
+            }
+            for n in nodes
+        ],
+    }
+
+
+@app.post("/trash/{memory_id}/restore")
+async def restore_trash(memory_id: str, agent_id: Optional[str] = None):
+    """Restore a soft-deleted memory."""
+    ctx = get_cortex()
+    success = ctx.restore_memory(memory_id, agent_id=agent_id)
+    if not success:
+        raise HTTPException(404, f"Memory not found in trash: {memory_id}")
+    _emit_stats_refresh()
+    return {"restored": True, "id": memory_id}
+
+
+@app.delete("/trash/{memory_id}")
+async def purge_trash(memory_id: str, agent_id: Optional[str] = None):
+    """Permanently delete a memory from trash."""
+    ctx = get_cortex()
+    success = ctx.purge_memory(memory_id, agent_id=agent_id)
+    if not success:
+        raise HTTPException(404, f"Memory not found: {memory_id}")
+    return {"purged": True, "id": memory_id}
+
+
+@app.post("/trash/purge-all")
+async def purge_all_trash(older_than_days: int = Query(0, ge=0), agent_id: Optional[str] = None):
+    """Purge all soft-deleted memories. Use older_than_days to only purge stale items."""
+    ctx = get_cortex()
+    count = ctx.purge_all_deleted(older_than_days=older_than_days, agent_id=agent_id)
+    return {"purged": count}
+
+
+# =============================================================================
+# Memory Versions
+# =============================================================================
+
+@app.get("/memory/{memory_id}/versions")
+async def get_versions(memory_id: str, limit: int = Query(10, ge=1, le=50)):
+    """Get version history for a memory."""
+    ctx = get_cortex()
+    versions = ctx.get_memory_versions(memory_id, limit=limit)
+    return {"memory_id": memory_id, "count": len(versions), "versions": versions}
+
+
+@app.post("/memory/{memory_id}/versions/{version_id}/restore")
+async def restore_version(memory_id: str, version_id: int, agent_id: Optional[str] = None):
+    """Restore a memory to a previous version."""
+    ctx = get_cortex()
+    node = ctx.restore_version(version_id, agent_id=agent_id)
+    if node is None:
+        raise HTTPException(404, f"Version not found: {version_id}")
+    return {"restored": True, "memory_id": node.id, "version_id": version_id}
+
+
+# =============================================================================
+# Tags
+# =============================================================================
+
+@app.get("/tags")
+async def list_tags(agent_id: Optional[str] = None):
+    """List all tags with usage counts."""
+    ctx = get_cortex()
+    tags = ctx.tag_manager.list_tags(agent_id=agent_id)
+    return {"tags": [{"name": k, "count": v} for k, v in sorted(tags.items())]}
+
+
+@app.post("/tags/rename")
+async def rename_tag(req: RenameTagRequest):
+    """Rename a tag across all memories."""
+    ctx = get_cortex()
+    count = ctx.tag_manager.rename_tag(req.old_tag, req.new_tag, agent_id=req.agent_id)
+    return {"renamed": count, "old": req.old_tag, "new": req.new_tag}
+
+
+@app.post("/tags/merge")
+async def merge_tags(req: MergeTagsRequest):
+    """Merge multiple tags into one."""
+    ctx = get_cortex()
+    count = ctx.tag_manager.merge_tags(req.source_tags, req.target_tag, agent_id=req.agent_id)
+    return {"merged": count, "sources": req.source_tags, "target": req.target_tag}
+
+
+@app.delete("/tags/{tag}")
+async def delete_tag(tag: str, agent_id: Optional[str] = None):
+    """Remove a tag from all memories."""
+    ctx = get_cortex()
+    ctx.tag_manager.delete_tag(tag, agent_id=agent_id)
+    return {"deleted": True, "tag": tag}
+
+
+# =============================================================================
+# Threads
+# =============================================================================
+
+@app.get("/threads")
+async def list_threads(agent_id: Optional[str] = None, limit: int = Query(50, ge=1, le=200)):
+    """List conversation threads with memory counts."""
+    ctx = get_cortex()
+    threads = ctx.list_threads(agent_id=agent_id, limit=limit)
+    return {"count": len(threads), "threads": threads}
+
+
+@app.get("/threads/{thread_id}/memories")
+async def get_thread_memories(thread_id: str, limit: int = Query(100, ge=1, le=500)):
+    """Get all memories in a conversation thread."""
+    ctx = get_cortex()
+    results = ctx.get_thread_memories(thread_id, limit=limit)
+    return {
+        "thread_id": thread_id,
+        "count": len(results),
+        "memories": [
+            {
+                "id": node.id,
+                "content": node.content,
+                "type": node.metadata.memory_type.value,
+                "created_at": node.created_at.isoformat(),
+            }
+            for node, _score in results
+        ],
+    }
+
+
+@app.delete("/threads/{thread_id}")
+async def prune_thread(thread_id: str, agent_id: Optional[str] = None):
+    """Soft-delete all memories in a thread."""
+    ctx = get_cortex()
+    count = ctx.prune_thread(thread_id, agent_id=agent_id)
+    _emit_stats_refresh()
+    return {"pruned": count, "thread_id": thread_id}
+
+
+# =============================================================================
+# Bulk Operations
+# =============================================================================
+
+@app.post("/bulk/delete")
+async def bulk_delete(req: BulkDeleteRequest):
+    """Soft-delete multiple memories at once."""
+    ctx = get_cortex()
+    deleted = ctx.bulk_delete(req.memory_ids, soft=req.soft, agent_id=req.agent_id)
+    _emit_stats_refresh()
+    return {"deleted": len(deleted), "ids": deleted}
+
+
+@app.post("/bulk/visibility")
+async def bulk_visibility(req: BulkVisibilityRequest):
+    """Change visibility for multiple memories at once."""
+    ctx = get_cortex()
+    try:
+        vis = Visibility(req.visibility)
+    except ValueError:
+        raise HTTPException(400, f"Invalid visibility: {req.visibility}")
+    updated = ctx.bulk_update_visibility(req.memory_ids, visibility=vis, agent_id=req.agent_id)
+    return {"updated": len(updated), "ids": updated}
+
+
+@app.post("/export")
+async def export_memories(req: ExportRequest):
+    """Export memories to JSON or Markdown."""
+    ctx = get_cortex()
+    export_path = ctx.export_memories(
+        memory_ids=req.memory_ids,
+        agent_id=req.agent_id,
+        fmt=req.fmt,
+    )
+    return {"path": str(export_path), "format": req.fmt}
+
+
+# =============================================================================
+# File Watcher
+# =============================================================================
+
+_watcher = None
+
+
+def _get_watcher():
+    global _watcher
+    if _watcher is None:
+        from cerebro.watch import FileWatcher
+        _watcher = FileWatcher(
+            get_cortex(),
+            agent_id=os.environ.get("CEREBRO_AGENT_ID", "CLAUDE"),
+        )
+    return _watcher
+
+
+@app.get("/watch/status")
+async def watch_status():
+    """Get file watcher status."""
+    global _watcher
+    return {
+        "enabled": WATCH_ENABLED,
+        "running": _watcher.is_running() if _watcher else False,
+        "watched_directories": WATCH_DIRS,
+        "watched_count": _watcher.watched_count if _watcher else 0,
+    }
+
+
+@app.post("/watch/toggle")
+async def watch_toggle(req: WatchToggleRequest):
+    """Enable or disable the file watcher."""
+    global _watcher
+    import cerebro.config as cfg
+
+    cfg.WATCH_ENABLED = req.enabled
+    apply_settings({"watch": {"enabled": req.enabled}})
+
+    watcher = _get_watcher()
+    if req.enabled:
+        if not watcher.is_running():
+            watcher.start()
+        dirs = req.dirs or WATCH_DIRS or []
+        for d in dirs:
+            watcher.add_directory(d)
+    else:
+        watcher.stop()
+        _watcher = None
+
+    return {"enabled": req.enabled}
 
 
 # =============================================================================

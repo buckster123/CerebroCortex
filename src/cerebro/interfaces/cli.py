@@ -16,6 +16,7 @@ Usage:
 
 import json
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -1500,6 +1501,55 @@ def doctor_audit(fix_fingerprint, as_json):
         click.echo("      cerebro doctor audit --fix-fingerprint")
     elif not any_issue:
         click.echo("All collections are in sync with the current embedder.")
+
+
+# =============================================================================
+# Watch (file watcher)
+# =============================================================================
+
+@cli.command()
+@click.argument("directories", nargs=-1)
+@click.option("--agent", default="CLAUDE", help="Agent ID for ingested memories")
+@click.option("--tags", default="auto-ingested", help="Comma-separated tags")
+@click.option("--patterns", default="", help="Comma-separated file patterns (e.g. '*.md,*.txt')")
+@click.option("--delay", default=1.0, help="Delay in seconds before ingesting after file creation")
+def watch(directories, agent, tags, patterns, delay):
+    """Watch directories and auto-ingest new files.
+
+    Examples:
+        cerebro watch ~/Dropbox/CerebroInbox
+        cerebro watch /var/inbox --tags "production,auto"
+        cerebro watch ~/notes --patterns "*.md,*.txt"
+    """
+    if not directories:
+        click.echo("Error: No directories specified.", err=True)
+        sys.exit(1)
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else ["auto-ingested"]
+    pattern_list = [p.strip() for p in patterns.split(",")] if patterns else None
+
+    ctx = get_cortex()
+    from cerebro.watch import FileWatcher
+
+    watcher = FileWatcher(
+        ctx,
+        agent_id=agent,
+        tags=tag_list,
+        patterns=pattern_list,
+        delay_seconds=delay,
+    )
+    watcher.start()
+
+    for d in directories:
+        watcher.add_directory(d)
+
+    click.echo(f"Watching {watcher.watched_count} directorie(s). Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        click.echo("\nStopping watcher...")
+        watcher.stop()
 
 
 # =============================================================================
