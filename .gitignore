@@ -1,8 +1,8 @@
 # Data (persisted locally, not in git)
-data/chroma/
-data/cerebro.db
-data/exports/
+data/
 *.db-journal
+*.db-shm
+*.db-wal
 
 # Python
 __pycache__/

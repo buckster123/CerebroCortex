@@ -566,24 +566,19 @@ class CognitiveBootstrapAssembler:
         return result
 
     def _load_module_content(self, name: str, agent_id: Optional[str] = None) -> Optional[str]:
-        """Load a module's content from Cerebro by tag search."""
+        """Load a module's content from Cerebro by header search."""
         try:
-            # Search by module name in content header
+            # Search by exact module header for reliable retrieval
             header_match = name.replace("module-", "")
             results = self.cortex.recall(
-                query=f"ccbs {name}",
-                top_k=5,
+                query=f"# Module: {header_match}",
+                top_k=20,
                 agent_id=agent_id,
                 memory_types=[MemoryType.PROCEDURAL, MemoryType.SEMANTIC],
             )
             # Find exact match by header
             for node, score in results:
                 if f"# Module: {header_match}" in node.content:
-                    return node.content
-            # If no header match, check if the highest-scoring result has ccbs tags
-            for node, score in results:
-                tags = node.metadata.tags
-                if "ccbs" in tags and (name in tags or header_match in tags):
                     return node.content
             return None
         except Exception as exc:
