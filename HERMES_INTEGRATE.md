@@ -296,6 +296,49 @@ Maintenance: Run mcp_cerebro_dream_run periodically to consolidate and prune mem
 
 ---
 
+## CEREBRO.md — Operator Manifest
+
+For agents that want a dense, AI-optimized reference card instead of prose prompts,
+CerebroCortex ships a `CEREBRO.md` operator manifest.
+
+### What it is
+- A standalone markdown file that teaches an AI agent how to use CerebroCortex
+- Designed for **AI consumption**, not human readability — dense, symbolic, scannable
+- Self-describing: the file tells the agent when to read it and how to use it
+
+### How to integrate
+
+**Option 1: Hermes SOUL.md pointer (recommended)**
+Add to `~/.hermes/SOUL.md`:
+```
+If Cerebro MCP tools are available in this session, read ~/.hermes/CEREBRO.md
+at session start for the full operational manifest.
+```
+The agent self-bootstraps: it sees Cerebro tools, reads the file, and now knows
+how to use its brain.
+
+**Option 2: Any system with MCP + file access**
+Copy `CEREBRO.md` from this repo to your agent's config directory.
+Point your system prompt to it conditionally:
+```
+If CerebroCortex MCP tools are available, read CEREBRO.md for operational guidance.
+```
+
+**Option 3: Project-native**
+Copy `CEREBRO.md` into a project's repo root alongside `.hermes.md`.
+The agent discovers it the same way it discovers other context files.
+
+### Contents
+- § EXISTENCE — what Cerebro is and why to use it
+- § 90/10 RULE — what goes to Cerebro vs harness memory
+- § KEY OPERATIONS — when to use remember/recall/session_save/etc
+- § SESSION CHECKPOINT MATRIX — complexity-based persistence rules
+- § COGNITIVE BOOTSTRAP (CCBS) — dynamic module loading
+- § MULTI-AGENT — cross-agent communication patterns
+- § INHIBITIONS — rules about what NOT to do
+
+---
+
 ## Architecture Notes
 
 - **All data is local** — SQLite + ChromaDB + igraph, no cloud services required
