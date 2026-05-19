@@ -450,6 +450,11 @@ class CognitiveBootstrapAssembler:
         "agent": ["module-cerebro-agents"], "message": ["module-cerebro-agents"],
         "hailo": ["module-cerebro-agents"], "apex": ["module-cerebro-agents"],
         "send to": ["module-cerebro-agents"], "inbox": ["module-cerebro-agents"],
+        # Hermes
+        "hermes": ["module-hermes"], "hermes-agent": ["module-hermes"],
+        "/reset": ["module-hermes"], "/continue": ["module-hermes"], "/resume": ["module-hermes"],
+        "closedresource": ["module-hermes"], "closedresourceerror": ["module-hermes"],
+        "prompt caching": ["module-hermes"], "context compression": ["module-hermes"],
     }
 
     # Manual trigger -> modules mapping

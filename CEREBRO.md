@@ -12,6 +12,16 @@ If you are an AI agent and you have Cerebro MCP tools available:
    cognitive modules loaded dynamically
 If Cerebro tools are NOT available, ignore this file.
 
+§ COLD START / CONTINUITY CHECK
+At every session start, verify continuity:
+1. mcp_cerebro_session_recall(lookback_hours=24) — load recent session context
+2. mcp_cerebro_check_inbox() — check for messages from other agents
+3. mcp_cerebro_list_intentions() — surface pending TODOs
+If no recent session_save found in past 24h, this is a COLD START — inform user
+and ask if they want to load context from a specific past session.
+If recent session_save exists but unfinished_business present, proactively
+offer to continue where you left off.
+
 § EXISTENCE
 You have a Cerebro cortex — persistent memory backend.
 MCP: 56 tools | REST: :8767 | Dashboard: /ui
@@ -70,6 +80,13 @@ mcp_cerebro_cognitive_bootstrap(query, mode)
 | full     | all 13 modules                 | ~4200  |
 +----------+--------------------------------+--------+
 Triggers: "Full load" | "Debug mode" | "Creative mode" | "Research mode"
+
+§ PROJECT MODULES
+Projects can ship their own cognitive modules in `.cerebro-modules/` directory.
+Discovery: check cwd and walk up to git root for `.cerebro-modules/*.md`.
+Ingest any found modules as procedural memories with tags [project:{name}, ccbs-module].
+These project modules participate in recall alongside global CCBS modules.
+Example: ~/Projects/qwen36-harness/.cerebro-modules/module-harness-patterns.md
 
 § MULTI-AGENT
 Registered: CLAUDE-OPUS (this host), CLAUDE-HAILO (Pi edge), CLAUDE-APEX (cloud)
