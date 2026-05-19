@@ -573,17 +573,32 @@ class CognitiveBootstrapAssembler:
     def _load_module_content(self, name: str, agent_id: Optional[str] = None) -> Optional[str]:
         """Load a module's content from Cerebro by header search."""
         try:
-            # Search by exact module header for reliable retrieval
             header_match = name.replace("module-", "")
+            header_prefix = f"# Module: {header_match}"
+            
+            # Try exact SQLite match first (deterministic, no vector ambiguity)
+            try:
+                rows = self.cortex._graph.conn.execute(
+                    "SELECT id FROM memory_nodes WHERE content LIKE ? LIMIT 5",
+                    (f"{header_prefix}%",)
+                ).fetchall()
+                for row in rows:
+                    node = self.cortex._graph.get_node(row["id"])
+                    if node and header_prefix in node.content:
+                        if self.cortex._can_access(node, agent_id, None):
+                            return node.content
+            except Exception:
+                pass  # Fall back to vector search
+            
+            # Fallback: vector search with generous top_k
             results = self.cortex.recall(
-                query=f"# Module: {header_match}",
-                top_k=20,
+                query=header_prefix,
+                top_k=100,
                 agent_id=agent_id,
-                memory_types=[MemoryType.PROCEDURAL, MemoryType.SEMANTIC],
             )
             # Find exact match by header
             for node, score in results:
-                if f"# Module: {header_match}" in node.content:
+                if header_prefix in node.content:
                     return node.content
             return None
         except Exception as exc:
